@@ -52,16 +52,11 @@ export function AuthNav() {
     <span className="flex min-w-0 items-center gap-2 sm:gap-3">
       <Link
         href="/profile"
-        className="whitespace-nowrap transition-colors hover:text-foreground"
-      >
-        Profile
-      </Link>
-      <span
-        className="max-w-[6ch] truncate text-foreground sm:max-w-[12ch]"
+        className="max-w-[6ch] truncate whitespace-nowrap text-foreground transition-colors hover:text-primary sm:max-w-[12ch]"
         title={`@${user?.username}`}
       >
         @{user?.username}
-      </span>
+      </Link>
       <button
         type="button"
         onClick={signOut}

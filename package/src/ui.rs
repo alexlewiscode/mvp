@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
-use crate::app::{App, AppState, OnlineLeaderboard};
+use crate::app::{App, AppState, OnlineLeaderboard, ProfileState};
 use crate::game::daily_code::DailyCodePuzzle;
 use crate::game::scoring::{format_elapsed, format_score};
 use crate::game::{ActiveGame, GameKind};
@@ -35,6 +35,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     match app.state {
         AppState::Menu => render_menu(frame, app),
         AppState::Leaderboard => render_leaderboard(frame, app),
+        AppState::Profile => render_profile(frame, app),
         AppState::GameMenu => render_game_menu(frame, app),
         AppState::NamePrompt => render_name_prompt(frame, app),
         AppState::DailyCodeStarting => render_daily_code_status(
@@ -453,6 +454,66 @@ fn render_leaderboard(frame: &mut Frame, app: &App) {
     );
 }
 
+fn render_profile(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    let title = Style::new().fg(Color::Magenta).add_modifier(Modifier::BOLD);
+    let dim = Style::new().fg(Color::DarkGray);
+    let value = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
+    let mut lines = vec![Line::styled("YOUR PROFILE", title), Line::from("")];
+    match app.profile() {
+        ProfileState::NotLoaded | ProfileState::Loading => {
+            lines.push(Line::styled("Loading profile…", dim));
+        }
+        ProfileState::Unavailable(message) => {
+            lines.push(Line::styled(message.clone(), dim));
+        }
+        ProfileState::Available(profile) => {
+            lines.push(Line::styled(
+                format!("{}  (@{})", profile.display_name, profile.username),
+                value,
+            ));
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("DAILY RANK       ", dim),
+                Span::styled(format_rank(profile.stats.daily_rank), value),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("WEEKLY RANK      ", dim),
+                Span::styled(format_rank(profile.stats.weekly_rank), value),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("GLOBAL RANK      ", dim),
+                Span::styled(format_rank(profile.stats.global_rank), value),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("MATCH POINTS     ", dim),
+                Span::styled(format_score(u64::from(profile.stats.match_points)), value),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("RANKED RECORD    ", dim),
+                Span::styled(
+                    format!(
+                        "{} W  /  {} L",
+                        profile.stats.ranked_wins, profile.stats.ranked_losses
+                    ),
+                    value,
+                ),
+            ]));
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::styled("[ ESC ] BACK", dim));
+    let height = (lines.len() as u16).min(area.height);
+    frame.render_widget(
+        Paragraph::new(lines).alignment(Alignment::Center),
+        centered(area, area.width.min(64), height),
+    );
+}
+
+fn format_rank(rank: Option<u32>) -> String {
+    rank.map_or_else(|| "unranked".into(), |rank| format!("#{rank}"))
+}
+
 fn render_game(frame: &mut Frame, app: &App) {
     let Some(ActiveGame::DailyCode(game)) = app.game() else {
         render_menu(frame, app);
@@ -597,5 +658,36 @@ mod tests {
         let text = render_text(&app);
         assert!(text.contains("RANKED 1v1"));
         assert!(text.contains("Sign in to find an opponent"));
+    }
+
+    #[test]
+    fn profile_screen_renders_online_competition_stats() {
+        let mut app = test_app();
+        let (commands, _) = std::sync::mpsc::channel();
+        app.configure_online(commands, Some("coder".into()));
+        app.handle_input(AppInput::Account);
+        let profile = serde_json::from_value::<crate::api::OnlineProfile>(serde_json::json!({
+            "id": uuid::Uuid::nil(),
+            "username": "coder",
+            "display_name": "Coder",
+            "avatar_url": null,
+            "stats": {
+                "daily_rank": 2,
+                "weekly_rank": 3,
+                "global_rank": 4,
+                "match_points": 1250,
+                "ranked_wins": 5,
+                "ranked_losses": 2
+            }
+        }))
+        .unwrap();
+        app.handle_online_event(crate::api::WorkerEvent::Profile(Ok(profile)));
+
+        let text = render_text(&app);
+        assert!(text.contains("YOUR PROFILE"));
+        assert!(text.contains("Coder  (@coder)"));
+        assert!(text.contains("MATCH POINTS"));
+        assert!(text.contains("1,250"));
+        assert!(text.contains("5 W  /  2 L"));
     }
 }

@@ -13,6 +13,8 @@ MVP_API_URL=http://localhost:3000 npm run dev
 
 The site runs at `http://localhost:3001`. Start the Phase 4B API separately from `backend/` for live leaderboard data.
 
+When running `next dev` without a website session, the site automatically signs in a development-only `@mvpdev` placeholder account—no credentials required. Its sample profile includes a preview team and member performance so the roster and expanded member views can be reviewed locally. Real sessions take precedence, and the preview account is unavailable outside development.
+
 To run PostgreSQL, the backend, and the website together from the repository root:
 
 ```bash

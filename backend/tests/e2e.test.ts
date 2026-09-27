@@ -656,6 +656,7 @@ describe.skipIf(!databaseUrl)("database API", () => {
       match_points: 100,
       wins: 1,
       rated_matches: 1,
+      progression: [{ date: "2026-08-20", match_points: 100 }],
     });
     expect(publicProfile.json()).not.toHaveProperty("elo_rating");
   });
@@ -723,6 +724,33 @@ describe.skipIf(!databaseUrl)("database API", () => {
         [companyId, winner.id, matchId, loser.id],
       );
     }
+
+    const firstTeamMember = users[0];
+    if (!firstTeamMember) throw new Error("Company member fixture is missing");
+    const teamProfile = await app.inject({
+      url: "/v1/competition/profile",
+      headers: { authorization: `Bearer ${firstTeamMember.token}` },
+    });
+    expect(teamProfile.statusCode).toBe(200);
+    const teamProfileBody = teamProfile.json<{
+      team_members: {
+        username: string;
+        rated_matches: number;
+        wins: number;
+        progression: { date: string; match_points: number }[];
+      }[];
+    }>();
+    expect(teamProfileBody.team_members).toHaveLength(3);
+    expect(teamProfileBody.team_members).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          username: "team-0",
+          rated_matches: 2,
+          wins: 1,
+          progression: [{ date: "2026-08-20", match_points: 100 }],
+        }),
+      ]),
+    );
 
     const board = await app.inject({ url: "/v1/leaderboards/companies" });
     expect(board.statusCode).toBe(200);
