@@ -835,7 +835,7 @@ describe.skipIf(!databaseUrl)("database API", () => {
 
     const leaderboard = await app.inject({
       method: "GET",
-      url: "/v1/leaderboards/daily?date=2026-08-20",
+      url: "/v1/leaderboards/games/daily_code?period=daily&date=2026-08-20",
     });
     expect(leaderboard.json()).toMatchObject({
       entries: [
