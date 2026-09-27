@@ -45,7 +45,9 @@ describe("auth navigation", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AuthNav />);
 
-    expect(await screen.findByText("@octocat")).toBeInTheDocument();
+    const profileLink = await screen.findByRole("link", { name: "@octocat" });
+    expect(profileLink).toHaveAttribute("href", "/profile");
+    expect(screen.queryByText("Profile")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
     await waitFor(() =>
       expect(screen.getByRole("link", { name: "Sign in" })).toBeInTheDocument(),

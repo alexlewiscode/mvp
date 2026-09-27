@@ -25,6 +25,33 @@ describe("auth route handlers", () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
+  it("uses a placeholder website account by default in development", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+
+    const response = await getSession();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      user: {
+        id: "development-account",
+        username: "mvpdev",
+        display_name: "MVP Developer",
+        avatar_url: null,
+      },
+      development_account: true,
+    });
+    expect(auth.backendFetch).not.toHaveBeenCalled();
+  });
+
+  it("does not provide the placeholder website account outside development", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+
+    const response = await getSession();
+
+    expect(response.status).toBe(401);
+    expect(auth.backendFetch).not.toHaveBeenCalled();
+  });
+
   it("stores a completed GitHub session without returning its bearer token", async () => {
     const session = {
       token: "secret-bearer-token",

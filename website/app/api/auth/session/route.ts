@@ -4,10 +4,22 @@ import {
   errorResponse,
   readSessionToken,
 } from "@/lib/auth";
+import {
+  DEVELOPMENT_ACCOUNT,
+  developmentAccountEnabled,
+} from "@/lib/development-account";
 
 export async function GET() {
   const token = await readSessionToken();
-  if (!token) return errorResponse(401);
+  if (!token) {
+    if (developmentAccountEnabled()) {
+      return Response.json(
+        { user: DEVELOPMENT_ACCOUNT, development_account: true },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    return errorResponse(401);
+  }
 
   try {
     const response = await backendFetch("/v1/me", {

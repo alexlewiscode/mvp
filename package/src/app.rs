@@ -2,8 +2,8 @@ use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 use crate::api::{
-    ApiError, DailyCodeAttempt, Leaderboard, LeaderboardRequest, RankedMatchState, RunPayload,
-    WorkerCommand, WorkerEvent,
+    ApiError, DailyCodeAttempt, Leaderboard, LeaderboardRequest, OnlineProfile, RankedMatchState,
+    RunPayload, WorkerCommand, WorkerEvent,
 };
 use crate::config::{DailyMvp, HighScoreStore};
 use crate::event::AppInput;
@@ -19,6 +19,7 @@ const NAME_LEGAL: &str = " -_.'!@#$&+=()";
 pub enum AppState {
     Menu,
     Leaderboard,
+    Profile,
     GameMenu,
     NamePrompt,
     Playing,
@@ -38,6 +39,15 @@ pub enum OnlineLeaderboard {
     Unavailable,
 }
 
+#[derive(Debug, Default)]
+pub enum ProfileState {
+    #[default]
+    NotLoaded,
+    Loading,
+    Available(OnlineProfile),
+    Unavailable(String),
+}
+
 /// The single-player terminal puzzle, ranked queue, and their shared screens.
 pub struct App {
     pub state: AppState,
@@ -52,6 +62,7 @@ pub struct App {
     online_commands: Option<Sender<WorkerCommand>>,
     online_username: Option<String>,
     online_leaderboard: OnlineLeaderboard,
+    profile: ProfileState,
     account_requested: bool,
     account_message: Option<String>,
     ranked_match: Option<RankedMatchState>,
@@ -78,6 +89,7 @@ impl App {
             online_commands: None,
             online_username: None,
             online_leaderboard: OnlineLeaderboard::NotLoaded,
+            profile: ProfileState::NotLoaded,
             account_requested: false,
             account_message: None,
             ranked_match: None,
@@ -96,6 +108,7 @@ impl App {
             AppInput::Confirm => match self.state {
                 AppState::Menu => self.state = AppState::GameMenu,
                 AppState::Leaderboard => {}
+                AppState::Profile => {}
                 AppState::GameMenu => self.start_game(),
                 AppState::NamePrompt => self.submit_name(),
                 AppState::Playing => self.game_input(GameInput::Confirm),
@@ -133,8 +146,12 @@ impl App {
             }
             AppInput::Account => {
                 if self.state == AppState::Menu {
-                    self.account_requested = true;
-                    self.account_message = None;
+                    if self.online_username.is_some() {
+                        self.open_profile();
+                    } else {
+                        self.account_requested = true;
+                        self.account_message = None;
+                    }
                 }
             }
             AppInput::RankedMatch => {
@@ -161,6 +178,7 @@ impl App {
             AppInput::Back => match self.state {
                 AppState::Menu => {}
                 AppState::Leaderboard => self.state = AppState::Menu,
+                AppState::Profile => self.state = AppState::Menu,
                 AppState::NamePrompt => self.dismiss_name_prompt(),
                 AppState::GameMenu => self.state = AppState::Menu,
                 AppState::Matchmaking => {
@@ -201,7 +219,7 @@ impl App {
             return;
         }
         let day = crate::config::today_ordinal();
-        if self.store.daily_code_attempted(day) {
+        if self.online_username.is_none() && self.store.daily_code_attempted(day) {
             self.game = None;
             self.daily_code_message =
                 Some("You've already attempted today's puzzle. Come back tomorrow.".into());
@@ -222,7 +240,7 @@ impl App {
 
     fn begin_daily_code(&mut self, day: u64, online_claimed: bool) {
         self.pending_daily_code_day = None;
-        if !self.store.mark_daily_code_attempt(day) {
+        if !online_claimed && !self.store.mark_daily_code_attempt(day) {
             self.daily_code_message =
                 Some("You've already attempted today's puzzle. Come back tomorrow.".into());
             self.state = AppState::DailyCodeLocked;
@@ -466,8 +484,26 @@ impl App {
         }
     }
 
+    fn open_profile(&mut self) {
+        self.state = AppState::Profile;
+        self.profile = ProfileState::Loading;
+        let sent = self
+            .online_commands
+            .as_ref()
+            .is_some_and(|commands| commands.send(WorkerCommand::Profile).is_ok());
+        if !sent {
+            self.profile = ProfileState::Unavailable("Profile unavailable while offline.".into());
+        }
+    }
+
     pub fn handle_online_event(&mut self, event: WorkerEvent) {
         match event {
+            WorkerEvent::Profile(Ok(profile)) => {
+                self.profile = ProfileState::Available(profile);
+            }
+            WorkerEvent::Profile(Err(error)) => {
+                self.profile = ProfileState::Unavailable(error.to_string());
+            }
             WorkerEvent::Leaderboard(Ok(board)) => {
                 self.online_leaderboard = OnlineLeaderboard::Available(board)
             }
@@ -550,6 +586,10 @@ impl App {
 
     pub fn online_leaderboard(&self) -> &OnlineLeaderboard {
         &self.online_leaderboard
+    }
+
+    pub fn profile(&self) -> &ProfileState {
+        &self.profile
     }
 
     pub fn online_username(&self) -> Option<&str> {
@@ -678,7 +718,73 @@ mod tests {
         assert_eq!(app.state, AppState::Playing);
         app.back_to_menu();
         app.start_game_of(GameKind::DailyCode);
+        assert_eq!(app.state, AppState::DailyCodeStarting);
+        assert!(matches!(
+            received.try_recv(),
+            Ok(WorkerCommand::ClaimDailyCodeAttempt)
+        ));
+        app.handle_online_event(WorkerEvent::DailyCodeAttempt(Err(ApiError::Conflict {
+            code: "daily_attempt_used".into(),
+            message: "already claimed".into(),
+        })));
         assert_eq!(app.state, AppState::DailyCodeLocked);
+    }
+
+    #[test]
+    fn local_practice_does_not_block_a_signed_in_official_attempt() {
+        let mut app = App::new(store());
+        app.set_terminal_size(100, 30);
+        app.start_game_of(GameKind::DailyCode);
+        assert_eq!(app.state, AppState::Playing);
+
+        app.back_to_menu();
+        let (commands, received) = std::sync::mpsc::channel();
+        app.configure_online(commands, Some("coder".into()));
+        app.start_game_of(GameKind::DailyCode);
+        assert_eq!(app.state, AppState::DailyCodeStarting);
+        assert!(matches!(
+            received.try_recv(),
+            Ok(WorkerCommand::ClaimDailyCodeAttempt)
+        ));
+        app.handle_online_event(WorkerEvent::DailyCodeAttempt(Ok(DailyCodeAttempt {
+            date: chrono::Utc::now().format("%Y-%m-%d").to_string(),
+            started_at: chrono::Utc::now().to_rfc3339(),
+        })));
+        assert_eq!(app.state, AppState::Playing);
+    }
+
+    #[test]
+    fn account_shortcut_loads_profile_for_signed_in_users() {
+        let mut app = App::new(store());
+        let (commands, received) = std::sync::mpsc::channel();
+        app.configure_online(commands, Some("coder".into()));
+
+        app.handle_input(AppInput::Account);
+        assert_eq!(app.state, AppState::Profile);
+        assert!(matches!(received.try_recv(), Ok(WorkerCommand::Profile)));
+
+        let profile = serde_json::from_value::<OnlineProfile>(serde_json::json!({
+            "id": uuid::Uuid::nil(),
+            "username": "coder",
+            "display_name": "Coder",
+            "avatar_url": null,
+            "stats": {
+                "daily_rank": 2,
+                "weekly_rank": 3,
+                "global_rank": 4,
+                "match_points": 500,
+                "ranked_wins": 5,
+                "ranked_losses": 2
+            }
+        }))
+        .unwrap();
+        app.handle_online_event(WorkerEvent::Profile(Ok(profile)));
+        assert!(matches!(
+            app.profile(),
+            ProfileState::Available(profile) if profile.username == "coder"
+        ));
+        app.handle_input(AppInput::Back);
+        assert_eq!(app.state, AppState::Menu);
     }
 
     #[test]

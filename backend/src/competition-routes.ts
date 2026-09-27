@@ -562,15 +562,95 @@ export function registerCompetitionRoutes(
         [user.id],
       );
       const row = result.rows[0];
-      return (
-        row ?? {
+      const progression = await db.query<{
+        date: string;
+        match_points: number;
+      }>(
+        `SELECT to_char(played_on, 'YYYY-MM-DD') AS date,
+          sum(points_earned) OVER (ORDER BY played_on)::integer AS match_points
+        FROM (
+          SELECT (m.completed_at AT TIME ZONE 'UTC')::date AS played_on,
+            sum(CASE WHEN m.winner_id = $1 THEN $2 ELSE 0 END)::integer AS points_earned
+          FROM ranked_matches m
+          WHERE m.status = 'completed' AND m.completed_at IS NOT NULL
+            AND (m.player_one_id = $1 OR m.player_two_id = $1)
+          GROUP BY (m.completed_at AT TIME ZONE 'UTC')::date
+        ) AS daily_points
+        ORDER BY played_on`,
+        [user.id, WIN_POINTS],
+      );
+      const teamMembers = await db.query<{
+        id: string;
+        username: string;
+        display_name: string;
+        match_points: number;
+        rated_matches: number;
+        wins: number;
+        last_active: Date | null;
+      }>(
+        `SELECT u.id, u.username, u.display_name, u.match_points,
+          count(m.id)::integer AS rated_matches,
+          count(m.id) FILTER (WHERE m.winner_id = u.id)::integer AS wins,
+          max(coalesce(m.completed_at, m.created_at)) AS last_active
+        FROM company_memberships own
+        JOIN company_memberships member ON member.company_id = own.company_id
+        JOIN users u ON u.id = member.user_id
+        LEFT JOIN ranked_matches m ON m.status = 'completed'
+          AND (m.player_one_id = u.id OR m.player_two_id = u.id)
+        WHERE own.user_id = $1
+        GROUP BY u.id, u.username, u.display_name, u.match_points
+        ORDER BY u.match_points DESC, lower(u.username), u.id`,
+        [user.id],
+      );
+      const teamProgression = await db.query<{
+        user_id: string;
+        date: string;
+        match_points: number;
+      }>(
+        `WITH roster AS (
+          SELECT member.user_id
+          FROM company_memberships own
+          JOIN company_memberships member ON member.company_id = own.company_id
+          WHERE own.user_id = $1
+        ), daily_points AS (
+          SELECT roster.user_id,
+            (m.completed_at AT TIME ZONE 'UTC')::date AS played_on,
+            sum(CASE WHEN m.winner_id = roster.user_id THEN $2 ELSE 0 END)::integer AS points_earned
+          FROM roster
+          JOIN ranked_matches m ON m.player_one_id = roster.user_id OR m.player_two_id = roster.user_id
+          WHERE m.status = 'completed' AND m.completed_at IS NOT NULL
+          GROUP BY roster.user_id, (m.completed_at AT TIME ZONE 'UTC')::date
+        )
+        SELECT user_id, to_char(played_on, 'YYYY-MM-DD') AS date,
+          sum(points_earned) OVER (PARTITION BY user_id ORDER BY played_on)::integer AS match_points
+        FROM daily_points
+        ORDER BY user_id, played_on`,
+        [user.id, WIN_POINTS],
+      );
+      const memberProgression = new Map<
+        string,
+        { date: string; match_points: number }[]
+      >();
+      for (const point of teamProgression.rows) {
+        const points = memberProgression.get(point.user_id) ?? [];
+        points.push({ date: point.date, match_points: point.match_points });
+        memberProgression.set(point.user_id, points);
+      }
+      return {
+        ...(row ?? {
           match_points: 0,
           rated_matches: 0,
           wins: 0,
           company_name: null,
           company_domain: null,
-        }
-      );
+        }),
+        progression: progression.rows,
+        team_members: teamMembers.rows.map((member) => ({
+          ...member,
+          last_active: member.last_active?.toISOString() ?? null,
+          progression: memberProgression.get(member.id) ?? [],
+        })),
+      };
     },
   );
 

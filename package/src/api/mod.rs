@@ -9,8 +9,8 @@ mod queue;
 mod runs;
 
 pub use auth::{
-    AuthFlow, BrowserFlow, CredentialStore, EmailFlow, KeyringCredentialStore, PollingFlow,
-    Session, SessionManager,
+    AuthFlow, BrowserFlow, CredentialStore, EmailFlow, KeyringCredentialStore, OnlineProfile,
+    PollingFlow, Session, SessionManager,
 };
 pub use client::{ApiClient, ApiError, ClientVersion};
 pub use leaderboard::{Leaderboard, LeaderboardRequest};
@@ -28,6 +28,7 @@ use std::thread;
 pub enum WorkerCommand {
     Submit(RunPayload),
     Leaderboard(LeaderboardRequest),
+    Profile,
     ClaimDailyCodeAttempt,
     JoinRankedQueue,
     LeaveRankedQueue,
@@ -45,6 +46,7 @@ pub enum WorkerEvent {
     RunQueued(uuid::Uuid),
     QueueProcessed(QueueProcessResult),
     Leaderboard(Result<Leaderboard, ApiError>),
+    Profile(Result<OnlineProfile, ApiError>),
     DailyCodeAttempt(Result<DailyCodeAttempt, ApiError>),
     RankedMatch(Result<RankedMatchState, ApiError>),
     RankedSubmission(Result<MatchSubmission, ApiError>),
@@ -201,6 +203,13 @@ fn worker_main(
             WorkerCommand::Leaderboard(request) => {
                 let result = runtime.block_on(client.leaderboard(request));
                 let _ = events.send(WorkerEvent::Leaderboard(result));
+            }
+            WorkerCommand::Profile => {
+                let result = session
+                    .as_ref()
+                    .ok_or(ApiError::Unauthorized)
+                    .and_then(|session| runtime.block_on(client.me(session)));
+                let _ = events.send(WorkerEvent::Profile(result));
             }
             WorkerCommand::ClaimDailyCodeAttempt => {
                 let result = session
