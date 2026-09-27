@@ -282,13 +282,21 @@ mod tests {
     }
 
     fn run() -> RunPayload {
+        let date = Utc::now().format("%Y-%m-%d").to_string();
+        let mut result = Map::new();
+        result.insert("solved".into(), serde_json::Value::Bool(true));
+        result.insert("attempts".into(), serde_json::Value::from(0));
+        result.insert("hint_used".into(), serde_json::Value::Bool(false));
+        result.insert("answer".into(), serde_json::Value::String("fixed".into()));
         RunPayload::new(
-            super::super::GameId::StackOverflow,
-            50,
-            1,
-            "test",
-            Map::new(),
-            None,
+            5_000,
+            5_000,
+            result,
+            super::super::runs::Challenge {
+                id: format!("daily_code:v1:{date}"),
+                date,
+                version: 1,
+            },
         )
         .unwrap()
     }
@@ -329,15 +337,15 @@ mod tests {
         serde_json::json!({
             "id": uuid::Uuid::new_v4(),
             "client_run_id": run.client_run_id,
-            "game_id": "stack_overflow",
-            "challenge_date": "2026-08-20",
-            "challenge_version": null,
-            "challenge_id": null,
-            "raw_score": 50,
-            "normalized_score": 50,
-            "result": {},
-            "duration_ms": 1,
-            "client_version": "test",
+            "game_id": "daily_code",
+            "challenge_date": run.challenge.date,
+            "challenge_version": 1,
+            "challenge_id": run.challenge.id,
+            "raw_score": run.raw_score,
+            "normalized_score": 3_595_000,
+            "result": {"solved": true, "attempts": 0, "hint_used": false},
+            "duration_ms": run.duration_ms,
+            "client_version": run.client_version,
             "normalization_version": 1,
             "created_at": "2026-08-20T12:00:00Z"
         })

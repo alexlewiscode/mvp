@@ -1,9 +1,4 @@
-export const GAME_IDS = [
-  "overall",
-  "stack_overflow",
-  "daily_pr",
-  "daily_fix",
-] as const;
+export const GAME_IDS = ["overall", "daily_code"] as const;
 export const PERIODS = ["daily", "weekly", "all-time"] as const;
 
 export type GameFilter = (typeof GAME_IDS)[number];
@@ -30,6 +25,21 @@ export interface Leaderboard {
   entries: LeaderboardEntry[];
 }
 
+export interface CompanyLeaderboardEntry {
+  rank: number;
+  id: string;
+  name: string;
+  email_domain: string;
+  active_members: number;
+  average_points: number;
+}
+
+export interface CompanyLeaderboard {
+  period: "rolling_30_days";
+  minimum_active_members: number;
+  entries: CompanyLeaderboardEntry[];
+}
+
 export class LeaderboardUnavailableError extends Error {
   constructor() {
     super("Leaderboard unavailable");
@@ -39,7 +49,9 @@ export class LeaderboardUnavailableError extends Error {
 
 export function parsePeriod(value: string | string[] | undefined): Period {
   const candidate = Array.isArray(value) ? value[0] : value;
-  return PERIODS.includes(candidate as Period) ? (candidate as Period) : "daily";
+  return PERIODS.includes(candidate as Period)
+    ? (candidate as Period)
+    : "daily";
 }
 
 export function parseGame(value: string | string[] | undefined): GameFilter {
@@ -53,9 +65,10 @@ export async function fetchLeaderboard(
   period: Period,
   game: GameFilter,
 ): Promise<Leaderboard> {
-  const baseUrl = (
-    process.env.MVP_API_URL ?? "http://localhost:3000"
-  ).replace(/\/$/, "");
+  const baseUrl = (process.env.MVP_API_URL ?? "http://localhost:3000").replace(
+    /\/$/,
+    "",
+  );
   const effectiveGame = period === "weekly" ? "overall" : game;
   const endpoint =
     effectiveGame === "overall"
@@ -70,6 +83,24 @@ export async function fetchLeaderboard(
     });
     if (!response.ok) throw new LeaderboardUnavailableError();
     return (await response.json()) as Leaderboard;
+  } catch {
+    throw new LeaderboardUnavailableError();
+  }
+}
+
+export async function fetchCompanyLeaderboard(): Promise<CompanyLeaderboard> {
+  const baseUrl = (process.env.MVP_API_URL ?? "http://localhost:3000").replace(
+    /\/$/,
+    "",
+  );
+  try {
+    const response = await fetch(`${baseUrl}/v1/leaderboards/companies`, {
+      headers: { Accept: "application/json" },
+      next: { revalidate: 60 },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) throw new Error("Company leaderboard unavailable");
+    return (await response.json()) as CompanyLeaderboard;
   } catch {
     throw new LeaderboardUnavailableError();
   }

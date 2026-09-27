@@ -56,7 +56,17 @@ export function SignInForm({
     "idle",
   );
   const [emailError, setEmailError] = useState("");
+  const [emailAddress, setEmailAddress] = useState("");
+  const [resendIn, setResendIn] = useState(0);
   const [codeStatus, setCodeStatus] = useState<"idle" | "copied">("idle");
+
+  useEffect(() => {
+    if (emailState !== "sent" || resendIn <= 0) return;
+    const timer = window.setTimeout(() => {
+      setResendIn((remaining) => Math.max(0, remaining - 1));
+    }, 1_000);
+    return () => window.clearTimeout(timer);
+  }, [emailState, resendIn]);
 
   async function copyCode() {
     if (!githubFlow) return;
@@ -125,7 +135,9 @@ export function SignInForm({
           error?: string;
         };
         if (!response.ok && response.status !== 202) {
-          throw new Error(body.error ?? "GitHub sign-in could not be completed.");
+          throw new Error(
+            body.error ?? "GitHub sign-in could not be completed.",
+          );
         }
         if (body.status === "complete") {
           setGithubState("complete");
@@ -184,7 +196,9 @@ export function SignInForm({
     setGithubError("");
     setGithubState("starting");
     try {
-      const response = await fetch("/api/auth/github/start", { method: "POST" });
+      const response = await fetch("/api/auth/github/start", {
+        method: "POST",
+      });
       if (!response.ok) throw new Error(await responseError(response));
       const flow = (await response.json()) as Omit<GithubFlow, "expiresAt">;
       setGithubFlow({
@@ -202,21 +216,22 @@ export function SignInForm({
     }
   }
 
-  async function startEmail(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function sendEmail(address: string) {
+    if (!emailAuthEnabled) return;
     setEmailError("");
     setEmailState("sending");
-    const data = new FormData(event.currentTarget);
     try {
       const response = await fetch("/api/auth/email/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          email: data.get("email"),
+          email: address,
           ...(browserToken ? { browser_token: browserToken } : {}),
         }),
       });
       if (!response.ok) throw new Error(await responseError(response));
+      setEmailAddress(address);
+      setResendIn(15);
       setEmailState("sent");
     } catch (error) {
       setEmailError(
@@ -228,13 +243,26 @@ export function SignInForm({
     }
   }
 
+  function startEmail(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const address = String(data.get("email") ?? "").trim();
+    if (address) void sendEmail(address);
+  }
+
+  function resendEmail() {
+    if (emailAddress && resendIn === 0) void sendEmail(emailAddress);
+  }
+
   if (completed) {
     return (
       <section className="rounded-xl border border-primary/30 bg-card p-8 text-center shadow-[0_0_60px_-20px] shadow-primary/40 sm:p-10">
         <div className="mx-auto flex size-14 items-center justify-center rounded-full border border-primary/40 bg-primary/10">
           <CheckCircle2 aria-hidden="true" className="size-7 text-primary" />
         </div>
-        <h2 className="mt-6 font-pixelify text-2xl">Terminal sign-in complete</h2>
+        <h2 className="mt-6 font-pixelify text-2xl">
+          Terminal sign-in complete
+        </h2>
         <p
           className="mx-auto mt-3 max-w-xs text-sm leading-6 text-muted-foreground"
           role="status"
@@ -250,20 +278,30 @@ export function SignInForm({
       {browserToken && (
         <section className="mb-6 rounded-xl border border-primary/30 bg-card p-6 shadow-[0_0_60px_-25px] shadow-primary/50 sm:p-8">
           <div className="flex items-center gap-3">
-            <SquareTerminal aria-hidden="true" className="size-5 text-primary" />
+            <SquareTerminal
+              aria-hidden="true"
+              className="size-5 text-primary"
+            />
             <h2 className="text-sm font-medium tracking-widest uppercase">
               Terminal sign-in
             </h2>
           </div>
           {sessionState === "checking" ? (
-            <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground" role="status">
-              <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
+            <p
+              className="mt-4 flex items-center gap-2 text-sm text-muted-foreground"
+              role="status"
+            >
+              <LoaderCircle
+                aria-hidden="true"
+                className="size-4 animate-spin"
+              />
               Checking your website session
             </p>
           ) : sessionState === "available" || sessionState === "completing" ? (
             <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted-foreground">
-                Confirm this terminal sign-in with your existing website account.
+                Confirm this terminal sign-in with your existing website
+                account.
               </p>
               <Button
                 onClick={completeExistingSession}
@@ -282,7 +320,10 @@ export function SignInForm({
             </p>
           )}
           {handoffError && (
-            <p className="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+            <p
+              className="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              role="alert"
+            >
               {handoffError}
             </p>
           )}
@@ -295,130 +336,183 @@ export function SignInForm({
         </section>
       )}
 
-      <div
-        className={
-          emailAuthEnabled ? "grid items-start gap-6 md:grid-cols-2" : "max-w-xl"
-        }
-      >
-      {githubFlow ? (
-        <section className="flex min-h-80 flex-col rounded-xl border border-border bg-card p-6 shadow-[0_0_60px_-30px] shadow-primary/30 sm:p-8">
-          <div className="mb-8 flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-lg border border-border bg-background">
-              <GitHubLogo width="20px" height="20px" color="currentColor" className="text-primary" />
+      <div className="mx-auto flex w-full max-w-lg flex-col items-stretch gap-4">
+        {githubFlow ? (
+          <section className="flex min-h-80 flex-col rounded-xl border border-border bg-card p-6 shadow-[0_0_60px_-30px] shadow-primary/30 sm:p-8">
+            <div className="mb-8 flex items-center gap-3">
+              <div className="flex size-9 items-center justify-center rounded-lg border border-border bg-background">
+                <GitHubLogo
+                  width="20px"
+                  height="20px"
+                  color="currentColor"
+                  className="text-primary"
+                />
+              </div>
+              <h2 className="text-lg font-medium">GitHub</h2>
             </div>
-            <h2 className="text-lg font-medium">GitHub</h2>
-          </div>
-          <div className="flex flex-1 flex-col justify-between gap-6">
-            <div>
-              <p className="text-sm text-muted-foreground">
-                Copy this one-time code, then continue to GitHub.
-              </p>
-              <div className="mt-5 flex items-center justify-between gap-3 rounded-lg border border-dashed border-primary/40 bg-background px-4 py-3.5">
-                <p className="truncate font-mono text-3xl tracking-[0.18em] text-primary select-all">
-                  {githubFlow.user_code}
+            <div className="flex flex-1 flex-col justify-between gap-6">
+              <div>
+                <p className="text-sm text-muted-foreground">
+                  Copy this one-time code, then continue to GitHub.
                 </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={copyCode}
+                <div className="mt-5 flex items-center justify-between gap-3 rounded-lg border border-dashed border-primary/40 bg-background px-4 py-3.5">
+                  <p className="truncate font-mono text-3xl tracking-[0.18em] text-primary select-all">
+                    {githubFlow.user_code}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={copyCode}
+                    aria-live="polite"
+                  >
+                    {codeStatus === "copied" ? (
+                      <CheckCircle2 aria-hidden="true" />
+                    ) : (
+                      <Copy aria-hidden="true" />
+                    )}
+                    {codeStatus === "copied" ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+              </div>
+              <div className="space-y-4">
+                <a
+                  className={buttonVariants({ className: "w-full" })}
+                  href={githubFlow.verification_uri}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open GitHub <ExternalLink aria-hidden="true" />
+                </a>
+                <p
+                  className="flex items-center justify-center gap-2 text-xs text-muted-foreground"
+                  role="status"
                   aria-live="polite"
                 >
-                  {codeStatus === "copied" ? (
-                    <CheckCircle2 aria-hidden="true" />
-                  ) : (
-                    <Copy aria-hidden="true" />
-                  )}
-                  {codeStatus === "copied" ? "Copied" : "Copy"}
-                </Button>
+                  <LoaderCircle
+                    aria-hidden="true"
+                    className="size-3 animate-spin text-primary"
+                  />
+                  Waiting for authorization
+                </p>
               </div>
             </div>
-            <div className="space-y-4">
-              <a
-                className={buttonVariants({ className: "w-full" })}
-                href={githubFlow.verification_uri}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open GitHub <ExternalLink aria-hidden="true" />
-              </a>
-              <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground" role="status" aria-live="polite">
-                <LoaderCircle aria-hidden="true" className="size-3 animate-spin text-primary" />
-                Waiting for authorization
-              </p>
-            </div>
-          </div>
-        </section>
-      ) : (
-        <div className="flex justify-center">
-          <button
-            type="button"
-            onClick={startGithub}
-            disabled={githubState === "starting"}
-            className="inline-flex items-center gap-2.5 rounded-full border border-border bg-card py-1.5 pr-5 pl-4 text-sm font-medium shadow-sm transition-colors hover:border-primary/50 hover:bg-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 outline-none disabled:pointer-events-none disabled:opacity-50"
-          >
-            <GitHubLogo width="22px" height="22px" color="currentColor" className="text-primary" />
-            {githubState === "starting" ? "Connecting..." : "Continue with GitHub"}
-            {githubState === "starting" && (
-              <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
-            )}
-          </button>
-        </div>
-      )}
-      {githubError && (
-        <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive md:col-span-2" role="alert">
-          {githubError}
-        </p>
-      )}
-
-      {emailAuthEnabled && (
-        <section className="flex min-h-80 flex-col rounded-xl border border-border bg-card p-6 shadow-[0_0_60px_-30px] shadow-primary/30 sm:p-8">
-        <div className="mb-8 flex items-center gap-3">
-          <div className="flex size-9 items-center justify-center rounded-lg border border-border bg-background">
-            <Mail aria-hidden="true" className="size-5 text-primary" />
-          </div>
-          <h2 className="text-lg font-medium">Email</h2>
-        </div>
-        {emailState === "sent" ? (
-          <div className="flex flex-1 flex-col justify-center">
-            <p className="text-lg font-medium">Check your email</p>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground" role="status">
-              If an account can sign in with that address, a one-time link is on
-              its way. You can close this page.
-            </p>
-          </div>
+          </section>
         ) : (
-          <form className="flex flex-1 flex-col justify-between gap-6" onSubmit={startEmail}>
-            <div>
-              <label htmlFor="email" className="text-sm text-muted-foreground">
-                Email address
-              </label>
+          <div className="flex w-full justify-center">
+            <button
+              type="button"
+              onClick={startGithub}
+              disabled={githubState === "starting"}
+              className="inline-flex w-full items-center justify-center gap-2.5 rounded-full border border-border bg-card py-3 pr-5 pl-4 text-sm font-medium shadow-sm transition-colors hover:border-primary/50 hover:bg-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 outline-none disabled:pointer-events-none disabled:opacity-50"
+            >
+              <GitHubLogo
+                width="22px"
+                height="22px"
+                color="currentColor"
+                className="text-primary"
+              />
+              {githubState === "starting"
+                ? "Connecting..."
+                : "Continue with GitHub"}
+              {githubState === "starting" && (
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="size-4 animate-spin"
+                />
+              )}
+            </button>
+          </div>
+        )}
+        {githubError && (
+          <p
+            className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            role="alert"
+          >
+            {githubError}
+          </p>
+        )}
+
+        <div
+          className="flex items-center gap-3 py-1 text-xs tracking-widest text-muted-foreground uppercase"
+          aria-hidden="true"
+        >
+          <span className="h-px flex-1 bg-border" />
+          <span>Or</span>
+          <span className="h-px flex-1 bg-border" />
+        </div>
+
+        {emailAddress && emailState !== "idle" ? (
+          <section className="flex w-full flex-col items-center gap-3 rounded-2xl border border-border bg-card px-5 py-5 text-center">
+            <p className="font-medium">Check your email</p>
+            <p
+              className="text-sm text-muted-foreground"
+              role="status"
+              aria-live="polite"
+            >
+              We sent a sign-in link to{" "}
+              <span className="text-foreground">{emailAddress}</span>.
+            </p>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={resendEmail}
+              disabled={emailState === "sending" || resendIn > 0}
+            >
+              {emailState === "sending"
+                ? "Sending…"
+                : resendIn > 0
+                  ? `Resend in ${resendIn}s`
+                  : "Resend email"}
+            </Button>
+          </section>
+        ) : (
+          <form className="flex w-full flex-col gap-2" onSubmit={startEmail}>
+            <div className="flex w-full items-center gap-2 rounded-full border border-border bg-card py-1.5 pr-1.5 pl-4 shadow-sm focus-within:border-primary/50">
+              <Mail
+                aria-hidden="true"
+                className="size-5 shrink-0 text-primary"
+              />
               <input
                 id="email"
                 name="email"
                 type="email"
                 autoComplete="email"
+                aria-label="Email Address"
                 required
-                placeholder="you@example.com"
-                className="mt-3 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+                defaultValue={emailAddress}
+                disabled={!emailAuthEnabled || emailState === "sending"}
+                placeholder="Email Address"
+                className="h-10 min-w-0 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50"
               />
-              <p className="mt-3 text-xs leading-5 text-muted-foreground">
-                We will send a short-lived sign-in link.
-              </p>
+              <Button
+                type="submit"
+                variant="ghost"
+                disabled={!emailAuthEnabled || emailState === "sending"}
+                className="rounded-full"
+              >
+                {emailState === "sending" ? (
+                  <LoaderCircle aria-hidden="true" className="animate-spin" />
+                ) : (
+                  "Continue"
+                )}
+              </Button>
             </div>
-            <Button type="submit" variant="outline" disabled={emailState === "sending"} className="w-full">
-              {emailState === "sending" && <LoaderCircle aria-hidden="true" className="animate-spin" />}
-              Send magic link
-            </Button>
+            {!emailAuthEnabled ? (
+              <p className="px-4 text-xs text-muted-foreground" role="status">
+                Email sign-in is temporarily unavailable.
+              </p>
+            ) : null}
           </form>
         )}
         {emailError && (
-          <p className="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+          <p
+            className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            role="alert"
+          >
             {emailError}
           </p>
         )}
-        </section>
-      )}
       </div>
     </div>
   );

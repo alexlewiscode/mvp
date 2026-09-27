@@ -40,17 +40,33 @@ export function AuthNav() {
   }
   if (state === "out") {
     return (
-      <Link href="/sign-in" className="whitespace-nowrap transition-colors hover:text-foreground">
+      <Link
+        href="/sign-in"
+        className="whitespace-nowrap transition-colors hover:text-foreground"
+      >
         Sign in
       </Link>
     );
   }
   return (
     <span className="flex min-w-0 items-center gap-2 sm:gap-3">
-      <span className="max-w-[6ch] truncate text-foreground sm:max-w-[12ch]" title={`@${user?.username}`}>
+      <Link
+        href="/profile"
+        className="whitespace-nowrap transition-colors hover:text-foreground"
+      >
+        Profile
+      </Link>
+      <span
+        className="max-w-[6ch] truncate text-foreground sm:max-w-[12ch]"
+        title={`@${user?.username}`}
+      >
         @{user?.username}
       </span>
-      <button type="button" onClick={signOut} className="whitespace-nowrap transition-colors hover:text-foreground">
+      <button
+        type="button"
+        onClick={signOut}
+        className="whitespace-nowrap transition-colors hover:text-foreground"
+      >
         Sign out
       </button>
     </span>

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 
 export const INSTALL_COMMAND = "npx @mvp-play/cli";
 
-export function InstallPill() {
+export function InstallPill({ id = "install" }: { id?: string }) {
   const [status, setStatus] = useState<"idle" | "copied" | "failed">("idle");
 
   async function copyCommand() {
@@ -22,7 +22,7 @@ export function InstallPill() {
 
   return (
     <div
-      id="install"
+      id={id}
       className="inline-flex items-center gap-2 rounded-full border border-border bg-card py-1.5 pl-5 pr-1.5 shadow-sm"
     >
       <code className="text-sm text-foreground sm:text-base">

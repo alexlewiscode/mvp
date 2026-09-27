@@ -1585,7 +1585,6 @@ dependencies = [
  "directories",
  "fs2",
  "keyring",
- "libc",
  "open",
  "rand 0.10.2",
  "ratatui",

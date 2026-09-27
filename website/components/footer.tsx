@@ -1,4 +1,4 @@
-const REPOSITORY = "https://github.com/itzsleepyy/waitstate";
+const REPOSITORY = "https://github.com/alexlewiscode/mvp";
 
 export function Footer() {
   return (

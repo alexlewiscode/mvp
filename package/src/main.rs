@@ -1,11 +1,9 @@
-mod agent;
 mod api;
 mod app;
 mod cli;
 mod config;
 mod event;
 mod game;
-mod ipc;
 mod log;
 mod tui;
 mod ui;
@@ -17,67 +15,16 @@ use std::time::Instant;
 
 use clap::Parser;
 
-use crate::agent::status::{AgentDisplay, AgentKind};
 use crate::api::{
     ApiClient, ApiWorker, AuthFlow, BrowserFlow, EmailFlow, GameId, KeyringCredentialStore,
     Leaderboard, LeaderboardRequest, PollingFlow, Session, SessionManager, WorkerCommand,
 };
-use crate::cli::{Command, IntegrationsCommand, LeaderboardKind, ProviderCommand};
+use crate::cli::{Command, LeaderboardKind};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = cli::Cli::parse();
     match cli.command {
-        None | Some(Command::Play) => run_tui(
-            cli.agent.map(|a| a.into_agent_display()),
-            cli.no_auto_resume,
-        ),
-        Some(Command::AgentEvent { args }) => {
-            // Used by agent hook commands. Never prints to stdout, never
-            // launches a TUI, and exits 0 even when MVP is not
-            // running: a missing game must never disturb the agent.
-            let (kind, event) =
-                cli::parse_agent_event_args(&args).map_err(std::io::Error::other)?;
-            crate::debug_log!("agent-event {} {event}", kind.id());
-            match ipc::send_event(kind, event) {
-                Ok(()) => crate::debug_log!("agent-event {} {event}: sent", kind.id()),
-                Err(err) => {
-                    crate::debug_log!("agent-event {} {event}: not sent ({err})", kind.id())
-                }
-            }
-            Ok(())
-        }
-        Some(Command::Hook { agent, event }) => {
-            // Bridge for hook systems whose protocol requires one JSON
-            // object on stdout (Codex, Gemini). "{}" carries no decision,
-            // no additional context: purely observational. Always exit 0 —
-            // exit 2 blocks Codex turns and Gemini tools, which MVP
-            // must never do.
-            let kind = agent.into_agent_kind();
-            match ipc::send_event(kind, event) {
-                Ok(()) => crate::debug_log!("hook {} {event}: sent", kind.id()),
-                Err(err) => crate::debug_log!("hook {} {event}: not sent ({err})", kind.id()),
-            }
-            println!("{{}}");
-            Ok(())
-        }
-        Some(Command::Claude { command }) => run_provider(AgentKind::ClaudeCode, command),
-        Some(Command::Codex { command }) => run_provider(AgentKind::Codex, command),
-        Some(Command::Gemini { command }) => run_provider(AgentKind::GeminiCli, command),
-        Some(Command::Opencode { command }) => run_provider(AgentKind::OpenCode, command),
-        Some(Command::Integrations { command }) => match command {
-            None => {
-                agent::integrations::run_overview();
-                Ok(())
-            }
-            Some(IntegrationsCommand::Install { all }) => {
-                agent::integrations::run_install(all);
-                Ok(())
-            }
-            Some(IntegrationsCommand::Repair) => {
-                agent::integrations::run_repair();
-                Ok(())
-            }
-        },
+        None | Some(Command::Play) => run_tui(),
         Some(Command::Login { github, email }) => {
             let request = match (github, email) {
                 (true, _) => LoginRequest::Github,
@@ -289,14 +236,11 @@ async fn run_profile() -> Result<(), Box<dyn Error>> {
         format_rank(profile.stats.global_rank)
     );
     println!(
-        "Best Stack       {}",
-        format_number(profile.stats.best_stack.max(0) as u64)
+        "Match points     {}",
+        format_number(u64::from(profile.stats.match_points))
     );
-    println!("Daily PR streak  {}", profile.stats.daily_pr_streak);
-    println!(
-        "Daily Fix        {}/7 this week",
-        profile.stats.daily_fix_this_week
-    );
+    println!("Ranked wins      {}", profile.stats.ranked_wins);
+    println!("Ranked losses    {}", profile.stats.ranked_losses);
     Ok(())
 }
 
@@ -319,16 +263,8 @@ fn leaderboard_request(board: LeaderboardKind, limit: u8) -> LeaderboardRequest 
         LeaderboardKind::Daily => LeaderboardRequest::Daily { date: None, limit },
         LeaderboardKind::Weekly => LeaderboardRequest::Weekly { limit },
         LeaderboardKind::AllTime => LeaderboardRequest::AllTime { limit },
-        LeaderboardKind::StackOverflow => LeaderboardRequest::Game {
-            game: GameId::StackOverflow,
-            limit,
-        },
-        LeaderboardKind::DailyPr => LeaderboardRequest::Game {
-            game: GameId::DailyPr,
-            limit,
-        },
-        LeaderboardKind::DailyFix => LeaderboardRequest::Game {
-            game: GameId::DailyFix,
+        LeaderboardKind::DailyCode => LeaderboardRequest::Game {
+            game: GameId::DailyCode,
             limit,
         },
     }
@@ -339,9 +275,7 @@ fn print_leaderboard(board: LeaderboardKind, leaderboard: &Leaderboard, username
         LeaderboardKind::Daily => "Daily",
         LeaderboardKind::Weekly => "Weekly",
         LeaderboardKind::AllTime => "All-Time",
-        LeaderboardKind::StackOverflow => "Stack Overflow",
-        LeaderboardKind::DailyPr => "The Daily PR",
-        LeaderboardKind::DailyFix => "The Daily Fix",
+        LeaderboardKind::DailyCode => "Daily Code Puzzle",
     };
     println!("MVP - {title} Leaderboard");
     println!();
@@ -382,40 +316,7 @@ fn format_number(value: u64) -> String {
     output
 }
 
-/// Dispatches one provider subcommand. Each provider handles its own
-/// config format; failures stay local to that provider.
-fn run_provider(kind: AgentKind, command: ProviderCommand) -> Result<(), Box<dyn Error>> {
-    use crate::agent::{claude, codex, gemini, opencode};
-    let to_err = |e: String| -> Box<dyn Error> { std::io::Error::other(e).into() };
-    match (kind, command) {
-        (AgentKind::ClaudeCode, ProviderCommand::Install) => claude::install().map_err(to_err),
-        (AgentKind::ClaudeCode, ProviderCommand::Uninstall) => claude::uninstall().map_err(to_err),
-        (AgentKind::ClaudeCode, ProviderCommand::Status) => {
-            claude::status();
-            Ok(())
-        }
-        (AgentKind::Codex, ProviderCommand::Install) => codex::install().map_err(to_err),
-        (AgentKind::Codex, ProviderCommand::Uninstall) => codex::uninstall().map_err(to_err),
-        (AgentKind::Codex, ProviderCommand::Status) => {
-            codex::status();
-            Ok(())
-        }
-        (AgentKind::GeminiCli, ProviderCommand::Install) => gemini::install().map_err(to_err),
-        (AgentKind::GeminiCli, ProviderCommand::Uninstall) => gemini::uninstall().map_err(to_err),
-        (AgentKind::GeminiCli, ProviderCommand::Status) => {
-            gemini::status();
-            Ok(())
-        }
-        (AgentKind::OpenCode, ProviderCommand::Install) => opencode::install().map_err(to_err),
-        (AgentKind::OpenCode, ProviderCommand::Uninstall) => opencode::uninstall().map_err(to_err),
-        (AgentKind::OpenCode, ProviderCommand::Status) => {
-            opencode::status();
-            Ok(())
-        }
-    }
-}
-
-fn run_tui(agent: Option<AgentDisplay>, no_auto_resume: bool) -> Result<(), Box<dyn Error>> {
+fn run_tui() -> Result<(), Box<dyn Error>> {
     if let Some(version) = obsolete_client_version() {
         println!(
             "MVP {} is no longer supported. Version {} or newer is required (latest: {}).",
@@ -430,7 +331,7 @@ fn run_tui(agent: Option<AgentDisplay>, no_auto_resume: bool) -> Result<(), Box<
     tui::install_panic_hook();
     let mut terminal = tui::init()?;
     let _guard = tui::TerminalGuard;
-    let result = run(&mut terminal, agent, no_auto_resume, online);
+    let result = run(&mut terminal, online);
     tui::restore()?;
     result
 }
@@ -451,13 +352,9 @@ fn obsolete_client_version() -> Option<api::ClientVersion> {
 
 fn run(
     terminal: &mut tui::Tui,
-    agent: Option<AgentDisplay>,
-    no_auto_resume: bool,
     mut online: Option<(ApiWorker, Option<String>)>,
 ) -> Result<(), Box<dyn Error>> {
     let mut app = app::App::new(config::HighScoreStore::discover());
-    app.set_agent_display(agent);
-    app.set_agent_auto_resume(!no_auto_resume);
     configure_app_online(&mut app, online.as_ref());
     let size = terminal.size()?;
     app.set_terminal_size(size.width, size.height);
@@ -465,30 +362,8 @@ fn run(
         app.open_name_prompt();
     }
 
-    let server = match ipc::IpcServer::start(ipc::socket_path()) {
-        Ok(Some(server)) => {
-            crate::debug_log!("IPC server listening at {}", server.socket_path().display());
-            Some(server)
-        }
-        Ok(None) => {
-            crate::debug_log!("another MVP instance owns the IPC socket");
-            None
-        }
-        Err(err) => {
-            crate::debug_log!("IPC unavailable ({err}); running standalone");
-            None
-        }
-    };
-
     let mut last_frame = Instant::now();
     while !app.should_quit() {
-        // Drain agent events on the main loop so application state stays
-        // single-threaded.
-        if let Some(server) = &server {
-            while let Some((kind, event)) = server.try_recv() {
-                app.handle_agent_event(kind, event);
-            }
-        }
         if let Some((worker, _)) = &online {
             while let Ok(event) = worker.try_event() {
                 app.handle_online_event(event);

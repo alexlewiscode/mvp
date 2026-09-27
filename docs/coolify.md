@@ -32,12 +32,15 @@ Use separate values for `POSTGRES_PASSWORD` and `SESSION_SECRET`. A hexadecimal 
 POSTGRES_PASSWORD=<first-generated-secret>
 SESSION_SECRET=<second-generated-secret>
 GITHUB_CLIENT_ID=<official-github-oauth-client-id>
-EMAIL_AUTH_ENABLED=false
+EMAIL_AUTH_ENABLED=true
+CLOUDFLARE_ACCOUNT_ID=<account-id>
+CLOUDFLARE_EMAIL_API_TOKEN=<email-service-token>
+EMAIL_FROM=login@mostvaluedprogrammer.com
 MINIMUM_CLIENT_VERSION=0.1.0
 LATEST_CLIENT_VERSION=0.1.0
 ```
 
-Cloudflare email variables may remain unset while email authentication is disabled.
+The Cloudflare email sender must be verified and the API token must have permission to send mail from `EMAIL_FROM`. The backend refuses to start with email enabled and incomplete settings.
 
 4. Assign `https://mostvaluedprogrammer.com:3001` to the `website` service.
 5. Assign `https://api.mostvaluedprogrammer.com:3000` to the `backend` service.
@@ -56,7 +59,7 @@ curl --fail https://api.mostvaluedprogrammer.com/v1/client-version
 curl --fail --head https://mostvaluedprogrammer.com/sign-in
 ```
 
-The API health response is `{"status":"ok"}`. The sign-in page initially displays GitHub only.
+The API health response is `{"status":"ok"}`. The sign-in page displays GitHub and email options.
 
 Test the installed terminal client:
 
@@ -69,18 +72,7 @@ Bare `mvp login` should open `https://mostvaluedprogrammer.com/sign-in` and hand
 
 After Coolify has valid certificates, Cloudflare proxying may be enabled for both DNS records with SSL/TLS mode set to Full (strict).
 
-## Enabling Email Later
-
-Set all four variables and redeploy both application services:
-
-```dotenv
-EMAIL_AUTH_ENABLED=true
-CLOUDFLARE_ACCOUNT_ID=<account-id>
-CLOUDFLARE_EMAIL_API_TOKEN=<email-service-token>
-EMAIL_FROM=login@mostvaluedprogrammer.com
-```
-
-The backend refuses to start with email enabled and incomplete provider credentials. Disabling the flag hides the website email form and rejects all email authentication endpoints.
+Company affiliation is optional. Users verify their work email from `/profile`; the company board only shows teams with at least three active verified members and uses average match points over the rolling last 30 days. Disabling `EMAIL_AUTH_ENABLED` also disables personal email sign-in and company-email verification.
 
 ## Operations
 

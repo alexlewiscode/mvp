@@ -35,16 +35,15 @@ Point the CLI at it with `MVP_API_URL=http://localhost:3000`. Backend quality co
 ## Change Guidelines
 
 - Keep game logic independent of terminal rendering.
-- Preserve unrelated user settings when changing integrations.
 - Keep persistence failures non-fatal to gameplay.
-- Add tests for state transitions, game rules, migrations, and integration ownership.
+- Add tests for application state transitions, game rules, and migrations.
 - Run formatting, strict Clippy, and the full test suite before submitting changes.
 
 ## Local Data
 
 New installations use the platform config directory selected for the application name `MVP`. It contains:
 
-- `highscore.json` for player name, per-game scores, and Daily PR progress
+- `highscore.json` for player name and personal daily-puzzle records
 - `mvp_day.json` for the current daily MVP record
 - `pending_runs/<user-id>.json` for bounded authenticated submissions awaiting retry
 

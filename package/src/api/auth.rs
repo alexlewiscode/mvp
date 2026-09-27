@@ -25,9 +25,12 @@ pub struct ProfileStats {
     pub daily_rank: Option<u32>,
     pub weekly_rank: Option<u32>,
     pub global_rank: Option<u32>,
-    pub best_stack: i64,
-    pub daily_pr_streak: u32,
-    pub daily_fix_this_week: u32,
+    #[serde(default)]
+    pub match_points: u32,
+    #[serde(default)]
+    pub ranked_wins: u32,
+    #[serde(default)]
+    pub ranked_losses: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]

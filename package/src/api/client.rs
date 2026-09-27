@@ -155,6 +155,26 @@ impl ApiClient {
         ))
     }
 
+    pub(crate) async fn delete_empty(
+        &self,
+        path: &str,
+        token: Option<&str>,
+    ) -> Result<(), ApiError> {
+        let url = self.url(path)?;
+        let mut request = self.http.delete(url);
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        let response = request.send().await.map_err(map_reqwest)?;
+        if response.status().is_success() {
+            return Ok(());
+        }
+        Err(map_status(
+            response.status(),
+            response.bytes().await.map_err(map_reqwest)?.as_ref(),
+        ))
+    }
+
     pub(crate) async fn raw_post<B: Serialize + ?Sized>(
         &self,
         path: &str,

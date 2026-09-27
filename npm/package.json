@@ -1,11 +1,11 @@
 {
   "name": "@mvp-play/cli",
   "version": "0.1.0",
-  "description": "MVP: Most Valued Programmer, a competitive terminal arcade for the time between prompts",
+  "description": "MVP: Most Valued Programmer, terminal games for competing coders",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/itzsleepyy/mvp.git"
+    "url": "git+https://github.com/alexlewiscode/mvp.git"
   },
   "homepage": "https://mostvaluedprogrammer.com",
   "bin": {

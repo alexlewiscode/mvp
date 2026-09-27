@@ -71,7 +71,7 @@ describe("homepage", () => {
     const githubLink = screen.getByRole("link", { name: "GitHub" });
     expect(githubLink).toHaveAttribute(
       "href",
-      "https://github.com/itzsleepyy/waitstate",
+      "https://github.com/alexlewiscode/mvp",
     );
   });
 });

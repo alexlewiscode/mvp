@@ -28,7 +28,7 @@ export const metadata: Metadata = {
     template: "%s / MVP",
   },
   description:
-    "A competitive terminal arcade for programmers. Play while your coding agents work and compete to become the daily MVP.",
+    "Compete with coders in quick terminal games, take on daily challenges, and climb the global MVP leaderboards.",
   alternates: { canonical: "/" },
   openGraph: {
     type: "website",
@@ -36,7 +36,7 @@ export const metadata: Metadata = {
     siteName: "MVP - Most Valued Programmer",
     title: "MVP - Most Valued Programmer",
     description:
-      "A competitive terminal arcade for programmers. Play while your coding agents work and compete to become the daily MVP.",
+      "Compete with coders in quick terminal games, take on daily challenges, and climb the global MVP leaderboards.",
     images: [{ url: "/opengraph-image", width: 1200, height: 630 }],
   },
   twitter: {

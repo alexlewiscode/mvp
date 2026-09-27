@@ -1,4 +1,4 @@
-//! The Daily Fix — spot the bug, fix it fastest. One short snippet per day,
+//! The Daily Code Puzzle — find and fix the broken line. One short snippet per day,
 //! identical for everyone (seeded from the day), with exactly one broken
 //! line. Type the corrected line; the clock stops on the correct fix.
 //! Wrong submissions cost time; after two misses a hint appears (and costs
@@ -389,8 +389,8 @@ pub const BANK: &[Bug] = &[
     },
 ];
 
-/// A run of The Daily Fix: today's bug, an input buffer and a clock.
-pub struct DailyFix {
+/// A run of the daily code puzzle: today's bug, an input buffer and a clock.
+pub struct DailyCodePuzzle {
     challenge_day: u64,
     bug: &'static Bug,
     input: String,
@@ -401,11 +401,14 @@ pub struct DailyFix {
     elapsed_millis: u64,
 }
 
-impl DailyFix {
+impl DailyCodePuzzle {
     pub fn new(seed: u64) -> Self {
         Self {
             challenge_day: seed,
-            bug: &BANK[seed as usize % BANK.len()],
+            // The first five entries mirror the server-authoritative daily
+            // puzzle bank; keep this stable so offline play sees the same
+            // puzzle as online players for the UTC date.
+            bug: &BANK[seed as usize % 5],
             input: String::new(),
             attempts: 0,
             hint_shown: false,
@@ -433,7 +436,6 @@ impl DailyFix {
                 }
             }
             GameInput::Confirm => self.submit(),
-            GameInput::Jump => {}
         }
     }
 
@@ -484,11 +486,6 @@ impl DailyFix {
             .max(1)
     }
 
-    #[cfg(test)]
-    pub fn elapsed(&self) -> f64 {
-        self.elapsed_millis as f64 / 1000.0
-    }
-
     /// Total time charged, including penalties from wrong fixes and the
     /// hint.
     pub fn total_seconds(&self) -> f64 {
@@ -497,6 +494,10 @@ impl DailyFix {
 
     pub fn charged_duration_millis(&self) -> u64 {
         self.elapsed_millis + self.penalty_ms
+    }
+
+    pub fn elapsed_millis(&self) -> u64 {
+        self.elapsed_millis
     }
 
     pub fn challenge_day(&self) -> u64 {
@@ -531,7 +532,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn type_line(game: &mut DailyFix, line: &str) {
+    fn type_line(game: &mut DailyCodePuzzle, line: &str) {
         for c in line.chars() {
             game.handle_input(GameInput::Type(c));
         }
@@ -539,17 +540,17 @@ mod tests {
 
     #[test]
     fn the_daily_bug_is_seeded_and_stable() {
-        let a = DailyFix::new(7);
-        let b = DailyFix::new(7);
+        let a = DailyCodePuzzle::new(7);
+        let b = DailyCodePuzzle::new(7);
         assert_eq!(a.bug(), b.bug());
-        assert_eq!(a.bug().title, BANK[7 % BANK.len()].title);
+        assert_eq!(a.bug().title, BANK[7 % 5].title);
         assert!(!a.is_game_over());
         assert_eq!(a.score(), 0);
     }
 
     #[test]
     fn typing_the_fix_solves_the_run() {
-        let mut game = DailyFix::new(0);
+        let mut game = DailyCodePuzzle::new(0);
         let fix = game.bug().fix;
         type_line(&mut game, fix);
         game.handle_input(GameInput::Confirm);
@@ -560,7 +561,7 @@ mod tests {
 
     #[test]
     fn whitespace_is_normalized_for_matching() {
-        let mut game = DailyFix::new(0);
+        let mut game = DailyCodePuzzle::new(0);
         let fix = game.bug().fix;
         // Loose spacing around the operators still matches.
         type_line(
@@ -573,7 +574,7 @@ mod tests {
 
     #[test]
     fn wrong_fixes_cost_time_and_eventually_reveal_the_hint() {
-        let mut game = DailyFix::new(0);
+        let mut game = DailyCodePuzzle::new(0);
         type_line(&mut game, "    for _ in 99..items.len() {");
         game.handle_input(GameInput::Confirm);
         assert!(!game.is_game_over());
@@ -587,7 +588,7 @@ mod tests {
         assert!(game.hint_shown(), "hint appears after two misses");
         assert_eq!(game.total_seconds(), 5.0 + 5.0 + 15.0);
 
-        let mut slow = DailyFix::new(0);
+        let mut slow = DailyCodePuzzle::new(0);
         slow.update(Duration::from_secs(1));
         type_line(&mut slow, "    for _ in 99..items.len() {");
         slow.handle_input(GameInput::Confirm);
@@ -597,14 +598,14 @@ mod tests {
     #[test]
     fn scoring_prefers_speed() {
         let fast = {
-            let mut game = DailyFix::new(3);
+            let mut game = DailyCodePuzzle::new(3);
             let fix = game.bug().fix;
             type_line(&mut game, fix);
             game.handle_input(GameInput::Confirm);
             game
         };
         let slow = {
-            let mut game = DailyFix::new(3);
+            let mut game = DailyCodePuzzle::new(3);
             game.update(Duration::from_secs(90));
             let fix = game.bug().fix;
             type_line(&mut game, fix);
@@ -618,14 +619,14 @@ mod tests {
     #[test]
     fn penalties_reduce_the_score() {
         let clean = {
-            let mut game = DailyFix::new(3);
+            let mut game = DailyCodePuzzle::new(3);
             let fix = game.bug().fix;
             type_line(&mut game, fix);
             game.handle_input(GameInput::Confirm);
             game.score()
         };
         let sloppy = {
-            let mut game = DailyFix::new(3);
+            let mut game = DailyCodePuzzle::new(3);
             type_line(&mut game, "nope");
             game.handle_input(GameInput::Confirm);
             let fix = game.bug().fix;
@@ -637,15 +638,15 @@ mod tests {
     }
 
     #[test]
-    fn backspace_edits_and_jump_is_ignored() {
-        let mut game = DailyFix::new(0);
+    fn backspace_edits_and_other_controls_do_not_affect_the_puzzle() {
+        let mut game = DailyCodePuzzle::new(0);
         let fix = game.bug().fix;
         type_line(&mut game, fix);
         game.handle_input(GameInput::Backspace);
         game.handle_input(GameInput::Backspace);
         assert_eq!(game.input().len(), fix.len() - 2, "backspace edits");
 
-        game.handle_input(GameInput::Jump);
+        game.handle_input(GameInput::Type('\n'));
         assert!(!game.is_game_over());
 
         // Clearing the buffer and typing the fix solves it.
@@ -660,7 +661,7 @@ mod tests {
 
     #[test]
     fn solved_runs_ignore_further_input() {
-        let mut game = DailyFix::new(0);
+        let mut game = DailyCodePuzzle::new(0);
         let fix = game.bug().fix;
         type_line(&mut game, fix);
         game.handle_input(GameInput::Confirm);

@@ -7,6 +7,7 @@ import { buildApp } from "../src/app.js";
 import { readConfig } from "../src/config.js";
 import { createPool } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
+import { dailyPuzzleOffset } from "../src/competition.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? "";
 
@@ -22,6 +23,7 @@ describe.skipIf(!databaseUrl)("database API", () => {
   let now = initialNow;
   let verificationToken = "";
   let verificationHandoff = "";
+  let companyCode = "";
   let githubPollResponses: GithubPollResponse[] = [];
 
   beforeAll(async () => {
@@ -45,9 +47,16 @@ describe.skipIf(!databaseUrl)("database API", () => {
       now: () => now,
       email: {
         send: (message) => {
-          const link = new URL(message.text.match(/https:\/\/\S+/)?.[0] ?? "");
-          verificationToken = link.searchParams.get("token") ?? "";
-          verificationHandoff = link.searchParams.get("handoff") ?? "";
+          const code = message.text.match(/verification code is (\d{6})/)?.[1];
+          if (code) {
+            companyCode = code;
+          } else {
+            const link = new URL(
+              message.text.match(/https:\/\/\S+/)?.[0] ?? "",
+            );
+            verificationToken = link.searchParams.get("token") ?? "";
+            verificationHandoff = link.searchParams.get("handoff") ?? "";
+          }
           return Promise.resolve();
         },
       },
@@ -81,6 +90,7 @@ describe.skipIf(!databaseUrl)("database API", () => {
     now = initialNow;
     verificationToken = "";
     verificationHandoff = "";
+    companyCode = "";
     githubPollResponses = [];
     await db.query(
       "TRUNCATE game_runs, login_handoffs, email_auth_flows, github_device_flows, auth_identities, sessions, users CASCADE",
@@ -458,20 +468,39 @@ describe.skipIf(!databaseUrl)("database API", () => {
     expect((await db.query("SELECT 1 FROM auth_identities")).rowCount).toBe(1);
   });
 
-  it("authenticates, stores, normalizes, and idempotently returns a run", async () => {
+  it("authenticates, validates, stores, and idempotently returns a daily code run", async () => {
     const bearer = await token("octocat");
+    const claimed = await app.inject({
+      method: "POST",
+      url: "/v1/puzzles/daily/attempt",
+      headers: { authorization: `Bearer ${bearer}` },
+    });
+    expect(claimed.statusCode).toBe(201);
+    const repeatedClaim = await app.inject({
+      method: "POST",
+      url: "/v1/puzzles/daily/attempt",
+      headers: { authorization: `Bearer ${bearer}` },
+    });
+    expect(repeatedClaim.statusCode).toBe(409);
     const id = randomUUID();
+    const offset = dailyPuzzleOffset("2026-08-20", 5);
+    const puzzle = await db.query<{ answer: string }>(
+      "SELECT answer FROM daily_code_puzzles ORDER BY puzzle_id OFFSET $1 LIMIT 1",
+      [offset],
+    );
+    const answer = puzzle.rows[0]?.answer;
+    if (!answer) throw new Error("Daily puzzle fixture is missing");
     const payload = {
       client_run_id: id,
-      game_id: "daily_pr",
-      raw_score: 2,
-      duration_ms: 100_000,
+      game_id: "daily_code",
+      raw_score: 65_000,
+      duration_ms: 60_000,
       client_version: "0.4.0",
-      result: { solved: true },
+      result: { solved: true, attempts: 1, hint_used: false, answer },
       challenge: {
         date: "2026-08-20",
         version: 1,
-        id: "daily_pr:v1:2026-08-20",
+        id: "daily_code:v1:2026-08-20",
       },
     };
     const created = await app.inject({
@@ -483,7 +512,7 @@ describe.skipIf(!databaseUrl)("database API", () => {
     expect(created.statusCode).toBe(201);
     expect(created.json()).toMatchObject({
       client_run_id: id,
-      normalized_score: 5_500,
+      normalized_score: 3_535_000,
       normalization_version: 1,
     });
 
@@ -499,18 +528,31 @@ describe.skipIf(!databaseUrl)("database API", () => {
     );
   });
 
-  it("enforces one result for each daily game and date", async () => {
+  it("enforces one daily code result per user and date", async () => {
     const bearer = await token("hubot");
+    const claimed = await app.inject({
+      method: "POST",
+      url: "/v1/puzzles/daily/attempt",
+      headers: { authorization: `Bearer ${bearer}` },
+    });
+    expect(claimed.statusCode).toBe(201);
+    const offset = dailyPuzzleOffset("2026-08-20", 5);
+    const puzzle = await db.query<{ answer: string }>(
+      "SELECT answer FROM daily_code_puzzles ORDER BY puzzle_id OFFSET $1 LIMIT 1",
+      [offset],
+    );
+    const answer = puzzle.rows[0]?.answer;
+    if (!answer) throw new Error("Daily puzzle fixture is missing");
     const base = {
-      game_id: "daily_fix",
+      game_id: "daily_code",
       raw_score: 60_000,
       duration_ms: 60_000,
       client_version: "test",
-      result: { solved: true, attempts: 0, hint_used: false },
+      result: { solved: true, attempts: 0, hint_used: false, answer },
       challenge: {
         date: "2026-08-20",
         version: 1,
-        id: "daily_fix:v1:2026-08-20",
+        id: "daily_code:v1:2026-08-20",
       },
     };
     const first = await app.inject({
@@ -528,26 +570,203 @@ describe.skipIf(!databaseUrl)("database API", () => {
     expect(first.statusCode).toBe(201);
     expect(second.statusCode).toBe(409);
     expect(second.json()).toMatchObject({
-      error: { code: "daily_result_exists" },
+      error: { code: "daily_attempt_used" },
     });
   });
 
-  it("uses competition rank and deterministic username order for ties", async () => {
-    for (const username of ["zeta", "alpha"]) {
+  it("pairs two players on the same puzzle, awards win points, and keeps ELO private", async () => {
+    const firstToken = await token("ranked-one");
+    const secondToken = await token("ranked-two");
+    const firstQueue = await app.inject({
+      method: "POST",
+      url: "/v1/matches/queue",
+      headers: { authorization: `Bearer ${firstToken}` },
+    });
+    expect(firstQueue.statusCode).toBe(200);
+    expect(firstQueue.json()).toMatchObject({ status: "waiting" });
+
+    const paired = await app.inject({
+      method: "POST",
+      url: "/v1/matches/queue",
+      headers: { authorization: `Bearer ${secondToken}` },
+    });
+    expect(paired.statusCode).toBe(200);
+    const state = paired.json<{
+      match_id: string;
+      status: string;
+      puzzle: { id: string };
+    }>();
+    expect(state.status).toBe("active");
+    expect(state.puzzle.id).toBeTruthy();
+    expect(paired.json()).not.toHaveProperty("elo_rating");
+
+    const userRows = await db.query<{ id: string; username: string }>(
+      "SELECT id, username FROM users WHERE username IN ('ranked-one', 'ranked-two')",
+    );
+    const winner = userRows.rows.find((row) => row.username === "ranked-one");
+    const loser = userRows.rows.find((row) => row.username === "ranked-two");
+    if (!winner || !loser)
+      throw new Error("Ranked match users were not created");
+    const puzzle = await db.query<{ answer: string }>(
+      "SELECT answer FROM daily_code_puzzles WHERE puzzle_id = $1",
+      [state.puzzle.id],
+    );
+    const answer = puzzle.rows[0]?.answer;
+    if (!answer) throw new Error("Ranked puzzle answer is missing");
+    const submission = await app.inject({
+      method: "POST",
+      url: `/v1/matches/${state.match_id}/submit`,
+      headers: { authorization: `Bearer ${firstToken}` },
+      payload: { answer, attempts: 0 },
+    });
+    expect(submission.statusCode).toBe(200);
+    expect(submission.json()).toMatchObject({
+      correct: true,
+      result: "won",
+      points_awarded: 100,
+    });
+
+    const repeated = await app.inject({
+      method: "POST",
+      url: `/v1/matches/${state.match_id}/submit`,
+      headers: { authorization: `Bearer ${firstToken}` },
+      payload: { answer, attempts: 0 },
+    });
+    expect(repeated.statusCode).toBe(409);
+
+    const ratings = await db.query<{
+      username: string;
+      elo_rating: number;
+      match_points: number;
+    }>(
+      "SELECT username, elo_rating, match_points FROM users WHERE id IN ($1, $2)",
+      [winner.id, loser.id],
+    );
+    expect(
+      ratings.rows.find((row) => row.username === "ranked-one"),
+    ).toMatchObject({ elo_rating: 1016, match_points: 100 });
+    expect(
+      ratings.rows.find((row) => row.username === "ranked-two"),
+    ).toMatchObject({ elo_rating: 984, match_points: 0 });
+    const publicProfile = await app.inject({
+      url: "/v1/competition/profile",
+      headers: { authorization: `Bearer ${firstToken}` },
+    });
+    expect(publicProfile.json()).toMatchObject({
+      match_points: 100,
+      wins: 1,
+      rated_matches: 1,
+    });
+    expect(publicProfile.json()).not.toHaveProperty("elo_rating");
+  });
+
+  it("verifies company email and ranks teams by active-member average", async () => {
+    const users: { id: string; token: string }[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const username = `team-${String(index)}`;
       const bearer = await token(username);
-      await app.inject({
+      const user = await db.query<{ id: string }>(
+        "SELECT id FROM users WHERE username = $1",
+        [username],
+      );
+      const userId = user.rows[0]?.id;
+      if (!userId) throw new Error("Company test user was not created");
+      const started = await app.inject({
         method: "POST",
-        url: "/v1/runs",
+        url: "/v1/company/verification/start",
         headers: { authorization: `Bearer ${bearer}` },
         payload: {
-          client_run_id: randomUUID(),
-          game_id: "stack_overflow",
-          raw_score: 100,
-          duration_ms: 1,
-          client_version: "test",
-          result: {},
+          company_name: "Example Works",
+          email: `dev${String(index)}@exampleworks.test`,
         },
       });
+      expect(started.statusCode).toBe(202);
+      expect(companyCode).toMatch(/^\d{6}$/);
+      const verified = await app.inject({
+        method: "POST",
+        url: "/v1/company/verification/complete",
+        headers: { authorization: `Bearer ${bearer}` },
+        payload: { code: companyCode },
+      });
+      expect(verified.statusCode).toBe(200);
+      users.push({ id: userId, token: bearer });
+    }
+    const company = await db.query<{ id: string }>(
+      "SELECT id FROM company_profiles WHERE email_domain = 'exampleworks.test'",
+    );
+    const companyId = company.rows[0]?.id;
+    if (!companyId) throw new Error("Verified company was not created");
+
+    for (let index = 0; index < users.length; index += 1) {
+      const winner = users[index];
+      const loser = users[(index + 1) % users.length];
+      if (!winner || !loser)
+        throw new Error("Company player fixture is missing");
+      const matchId = randomUUID();
+      await db.query(
+        `INSERT INTO ranked_matches(
+           id, status, puzzle_date, puzzle_id, player_one_id, player_two_id,
+           player_one_rating, player_two_rating, winner_id, started_at, expires_at, completed_at
+         ) VALUES ($1, 'completed', $2, 'daily-code-v1-01', $3, $4, 1000, 1000, $3, $5, $6, $5)`,
+        [
+          matchId,
+          "2026-08-20",
+          winner.id,
+          loser.id,
+          now,
+          new Date(now.getTime() + 300_000),
+        ],
+      );
+      await db.query(
+        `INSERT INTO company_match_activity(company_id, user_id, match_id, points)
+         VALUES ($1, $2, $3, 100), ($1, $4, $3, 0)`,
+        [companyId, winner.id, matchId, loser.id],
+      );
+    }
+
+    const board = await app.inject({ url: "/v1/leaderboards/companies" });
+    expect(board.statusCode).toBe(200);
+    expect(board.json()).toMatchObject({
+      period: "rolling_30_days",
+      minimum_active_members: 3,
+      entries: [
+        {
+          name: "Example Works",
+          email_domain: "exampleworks.test",
+          active_members: 3,
+          average_points: 100,
+        },
+      ],
+    });
+  });
+
+  it("uses competition rank and deterministic username order for match-win points", async () => {
+    const users: Record<string, string> = {};
+    for (const username of ["alpha", "zeta", "challenger"]) {
+      await token(username);
+      const result = await db.query<{ id: string }>(
+        "SELECT id FROM users WHERE username = $1",
+        [username],
+      );
+      const row = result.rows[0];
+      if (!row) throw new Error(`Missing fixture user ${username}`);
+      users[username] = row.id;
+    }
+    for (const winner of ["alpha", "zeta"]) {
+      await db.query(
+        `INSERT INTO ranked_matches(
+           id, status, puzzle_date, puzzle_id, player_one_id, player_two_id,
+           player_one_rating, player_two_rating, winner_id, started_at, expires_at, completed_at
+         ) VALUES ($1, 'completed', $2, 'daily-code-v1-01', $3, $4, 1000, 1000, $3, $5, $6, $5)`,
+        [
+          randomUUID(),
+          "2026-08-20",
+          users[winner],
+          users.challenger,
+          now,
+          new Date(now.getTime() + 300_000),
+        ],
+      );
     }
     const leaderboard = await app.inject({
       method: "GET",
@@ -562,60 +781,66 @@ describe.skipIf(!databaseUrl)("database API", () => {
     });
   });
 
-  it("completes the local credential-free three-game Daily MVP flow", async () => {
+  it("submits one server-validated daily code result and hides the answer from storage", async () => {
     const bearer = await token("daily-mvp");
-    const runs = [
-      {
-        client_run_id: randomUUID(),
-        game_id: "stack_overflow",
-        raw_score: 100,
-        duration_ms: 1_000,
-        client_version: "test",
-        result: {},
+    const claimed = await app.inject({
+      method: "POST",
+      url: "/v1/puzzles/daily/attempt",
+      headers: { authorization: `Bearer ${bearer}` },
+    });
+    expect(claimed.statusCode).toBe(201);
+    const offset = dailyPuzzleOffset("2026-08-20", 5);
+    const puzzle = await db.query<{ answer: string }>(
+      "SELECT answer FROM daily_code_puzzles ORDER BY puzzle_id OFFSET $1 LIMIT 1",
+      [offset],
+    );
+    const puzzleRow = puzzle.rows[0];
+    if (!puzzleRow) throw new Error("No daily puzzle fixture was selected");
+    const answer = puzzleRow.answer;
+    const payload = {
+      client_run_id: randomUUID(),
+      game_id: "daily_code",
+      raw_score: 65_000,
+      duration_ms: 60_000,
+      client_version: "test",
+      result: { solved: true, attempts: 1, hint_used: false, answer },
+      challenge: {
+        date: "2026-08-20",
+        version: 1,
+        id: "daily_code:v1:2026-08-20",
       },
-      {
-        client_run_id: randomUUID(),
-        game_id: "daily_pr",
-        raw_score: 2,
-        duration_ms: 100_000,
-        client_version: "test",
-        result: { solved: true },
-        challenge: {
-          date: "2026-08-20",
-          version: 1,
-          id: "daily_pr:v1:2026-08-20",
-        },
-      },
-      {
-        client_run_id: randomUUID(),
-        game_id: "daily_fix",
-        raw_score: 60_000,
-        duration_ms: 60_000,
-        client_version: "test",
-        result: { solved: true, attempts: 0, hint_used: false },
-        challenge: {
-          date: "2026-08-20",
-          version: 1,
-          id: "daily_fix:v1:2026-08-20",
-        },
-      },
-    ];
-    for (const payload of runs) {
-      const response = await app.inject({
-        method: "POST",
-        url: "/v1/runs",
-        headers: { authorization: `Bearer ${bearer}` },
-        payload,
-      });
-      expect(response.statusCode).toBe(201);
-    }
+    };
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/runs",
+      headers: { authorization: `Bearer ${bearer}` },
+      payload,
+    });
+    expect(created.statusCode).toBe(201);
+    expect(
+      created.json<{ result: Record<string, unknown> }>().result,
+    ).not.toHaveProperty("answer");
+    const stored = await db.query<{ result: Record<string, unknown> }>(
+      "SELECT result FROM game_runs WHERE client_run_id = $1",
+      [payload.client_run_id],
+    );
+    expect(stored.rows[0]?.result).not.toHaveProperty("answer");
+    const duplicate = await app.inject({
+      method: "POST",
+      url: "/v1/runs",
+      headers: { authorization: `Bearer ${bearer}` },
+      payload: { ...payload, client_run_id: randomUUID() },
+    });
+    expect(duplicate.statusCode).toBe(409);
 
     const leaderboard = await app.inject({
       method: "GET",
-      url: "/v1/leaderboards/daily?date=2026-08-20",
+      url: "/v1/leaderboards/games/daily_code?period=daily&date=2026-08-20",
     });
     expect(leaderboard.json()).toMatchObject({
-      entries: [{ rank: 1, points: 9_600, user: { username: "daily-mvp" } }],
+      entries: [
+        { rank: 1, points: 3_535_000, user: { username: "daily-mvp" } },
+      ],
     });
 
     const profile = await app.inject({
@@ -626,12 +851,12 @@ describe.skipIf(!databaseUrl)("database API", () => {
     expect(profile.json()).toMatchObject({
       username: "daily-mvp",
       stats: {
-        daily_rank: 1,
-        weekly_rank: 1,
-        global_rank: 1,
-        best_stack: 100,
-        daily_pr_streak: 1,
-        daily_fix_this_week: 1,
+        daily_rank: null,
+        weekly_rank: null,
+        global_rank: null,
+        match_points: 0,
+        ranked_wins: 0,
+        ranked_losses: 0,
       },
     });
   });

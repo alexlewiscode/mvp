@@ -23,7 +23,7 @@ services:
       PORT: 3000
       DATABASE_URL: postgres://mvp:${POSTGRES_PASSWORD}@postgres:5432/mvp # ggignore
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?Set the official GitHub OAuth App client ID}
-      EMAIL_AUTH_ENABLED: ${EMAIL_AUTH_ENABLED:-false}
+      EMAIL_AUTH_ENABLED: ${EMAIL_AUTH_ENABLED:-true}
       CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
       CLOUDFLARE_EMAIL_API_TOKEN: ${CLOUDFLARE_EMAIL_API_TOKEN:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
@@ -54,7 +54,7 @@ services:
     environment:
       MVP_API_URL: http://backend:3000
       NEXT_PUBLIC_SITE_URL: https://mostvaluedprogrammer.com
-      EMAIL_AUTH_ENABLED: ${EMAIL_AUTH_ENABLED:-false}
+      EMAIL_AUTH_ENABLED: ${EMAIL_AUTH_ENABLED:-true}
     expose:
       - "3001"
     depends_on:
