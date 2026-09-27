@@ -22,7 +22,10 @@ describe("homepage", () => {
 
     expect(screen.getByRole("heading", { name: "MVP" })).toBeInTheDocument();
     expect(screen.getByTestId("ascii-logo")).toBeInTheDocument();
-    expect(screen.getByText("npx @mvp-play/cli")).toBeInTheDocument();
+    expect(
+      screen.getByText("npm install -g @mvp-play/cli"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Install once, then run/)).toHaveTextContent("mvp");
     expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
   });
 
@@ -35,14 +38,17 @@ describe("homepage", () => {
     render(<Home />);
 
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
-    expect(writeText).toHaveBeenCalledWith("npx @mvp-play/cli");
+    expect(writeText).toHaveBeenCalledWith("npm install -g @mvp-play/cli");
     expect(
       await screen.findByRole("button", { name: /copied/i }),
     ).toBeInTheDocument();
   });
 
   it("keeps keyboard users able to bypass navigation", () => {
-    const layout = readFileSync(resolve(process.cwd(), "app/layout.tsx"), "utf8");
+    const layout = readFileSync(
+      resolve(process.cwd(), "app/layout.tsx"),
+      "utf8",
+    );
     expect(layout).toContain('className="skip-link"');
     expect(layout).toContain('href="#main-content"');
 
@@ -52,7 +58,10 @@ describe("homepage", () => {
         <Home />
       </>,
     );
-    expect(document.querySelector("main")).toHaveAttribute("id", "main-content");
+    expect(document.querySelector("main")).toHaveAttribute(
+      "id",
+      "main-content",
+    );
   });
 
   it("links to the leaderboard and repository from the header", () => {

@@ -24,12 +24,26 @@ export default function OpenGraphImage() {
         MVP / MOST VALUED PROGRAMMER
       </div>
       <div
-        style={{ display: "flex", fontSize: 180, lineHeight: 1, maxWidth: 1000 }}
+        style={{
+          display: "flex",
+          fontSize: 180,
+          lineHeight: 1,
+          maxWidth: 1000,
+        }}
       >
         MVP
       </div>
-      <div style={{ color: "#8c8c87", display: "flex", fontSize: 24 }}>
-        npx @mvp-play/cli
+      <div
+        style={{
+          color: "#8c8c87",
+          display: "flex",
+          flexDirection: "column",
+          fontSize: 24,
+          gap: 12,
+        }}
+      >
+        <span>npm install -g @mvp-play/cli</span>
+        <span style={{ fontSize: 20 }}>Then run mvp</span>
       </div>
     </div>,
     size,

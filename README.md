@@ -1,79 +1,55 @@
 # MVP — Most Valued Programmer
 
-**Coder competition, right in your terminal.** Test your own skills on the daily code puzzle, then take them into live ranked 1v1 matches. Hidden ELO matches you with similarly skilled developers; match wins earn public leaderboard points.
+MVP is an open-source terminal coding game with a daily solo puzzle and ranked 1v1 matches. Play the daily puzzle offline, or sign in to compete online and submit results to the leaderboards.
 
-Play locally without an account. Sign in to submit scores to the global leaderboards and compete for the Daily MVP. MVP runs as a standalone terminal game; it does not install hooks, plugins, or modify coding-tool configuration.
+## Quick start
 
-## Two ways to compete
-
-- **Daily Code Puzzle** — Everyone gets the same code puzzle each UTC day. Find and fix the broken line; faster correct solves rank higher.
-- **Ranked 1v1** — Queue from the terminal and race another developer to solve that day’s puzzle. First correct submission wins 100 match points. ELO is private and only used for matchmaking.
-
-Ranked matches and daily puzzles are designed for you to solve yourself. MVP asks players to keep AI out of the challenge, on an honor-system basis.
-
-## Play
-
-Requires a recent stable Rust toolchain.
+Requires Node.js 18 or newer. The npm install does not require Rust.
 
 ```bash
-git clone https://github.com/alexlewiscode/mvp
-cd mvp
-cargo install --path package
+npm install -g @mvp-play/cli
 mvp
 ```
 
-Choose a mode, set your player name, and compete. The daily puzzle and personal best work offline; ranked matches and online scoreboards require sign-in.
+Install once, then run `mvp` whenever you want to play. To build from source, see [Development](docs/development.md).
 
-## Online Competition
+## Game modes
+
+- **Daily Code Puzzle** — Solve the shared UTC-day puzzle against the clock. Play offline for a local attempt and personal best; sign in to claim an official attempt and submit results.
+- **Ranked 1v1** — Race another developer to solve the same puzzle. Ranked matchmaking requires sign-in; a win earns 100 match points.
+
+Please solve puzzles and matches yourself without AI assistance. This is an honor-system request.
+
+## Online play
+
+Sign in through the website:
 
 ```bash
 mvp login
-mvp login --github
-mvp login --email you@example.com
-mvp whoami
-mvp profile
-mvp leaderboard
-mvp leaderboard weekly
-mvp leaderboard daily-code
-mvp logout
 ```
 
-`mvp login` opens the MVP website, where you can continue with GitHub or email. The `--github` and `--email` options are available as direct sign-in flows. MVP stores only the resulting session in the operating-system credential store. Press `I` on the main menu for browser sign-in. Failed authenticated score submissions are queued locally and retried without interrupting play. Press `L` to open the match-points leaderboard.
-
-In the website profile, verify a company email to join its team. The company leaderboard ranks average match points per active, verified member over the rolling last 30 days; a company needs at least three active verified players to appear. ELO is never shown on public profiles or leaderboards.
+Use `mvp profile` to view your stats and `mvp leaderboard` to see the daily standings. Ranked matchmaking and official online results require sign-in; local daily play does not.
 
 ## Controls
 
 | Key | Action |
 | --- | --- |
-| `ENTER` | Select, start, resume, confirm, or submit |
-| `Up` / `Down` | Select a game |
-| Printable characters | Type a code fix in the daily puzzle or ranked match |
-| `Backspace` | Delete the last character |
-| `N` | Change player name from the main menu |
-| `L` | View the online Daily MVP leaderboard |
-| `I` | Sign in or view the online account action from the main menu |
-| `M` | Open ranked 1v1 matchmaking from the main menu |
-| `P` | Pause or resume manually |
-| `R` | Restart after game over |
-| `ESC` | Go back or cancel a rename; the first-run name prompt is required |
+| `↑` / `↓` | Select a mode |
+| `Enter` | Choose, play, or submit |
+| Letters / `Backspace` | Type or edit a code fix |
+| `M` | Start ranked matchmaking from the main menu |
+| `I` | Sign in or view your profile |
+| `L` | Open the leaderboard |
+| `Esc` | Go back |
 | `Q` / `Ctrl+C` | Quit |
 
-## Development
+## Documentation
 
-From the repository root:
-
-```bash
-cargo run
-cargo test
-cargo fmt --check
-cargo clippy -- -D warnings
-```
-
-The root is a Cargo workspace and `package/src/` is the authoritative Rust implementation. See [Development](docs/development.md) and [Architecture](docs/architecture.md) for technical details.
-
-Production deployment instructions for `mostvaluedprogrammer.com` are in [Coolify Deployment](docs/coolify.md). CLI publishing and mandatory-update operations are in [CLI Releases](docs/releases.md).
+- [Development](docs/development.md) and [Architecture](docs/architecture.md)
+- [Backend](docs/backend.md)
+- [CLI releases](docs/releases.md)
+- [Coolify deployment](docs/coolify.md)
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[MIT](LICENSE)
