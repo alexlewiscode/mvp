@@ -37,7 +37,7 @@ CREATE TABLE game_runs (
   id uuid PRIMARY KEY,
   client_run_id uuid NOT NULL UNIQUE,
   user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  game_id text NOT NULL CHECK (game_id IN ('stack_overflow', 'daily_pr', 'daily_fix')),
+  game_id text NOT NULL CHECK (game_id = 'daily_code'),
   challenge_date date NOT NULL,
   challenge_version integer,
   challenge_id text,
@@ -49,16 +49,12 @@ CREATE TABLE game_runs (
   normalization_version integer NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (octet_length(result::text) <= 2048),
-  CHECK (
-    (game_id = 'stack_overflow' AND challenge_version IS NULL AND challenge_id IS NULL)
-    OR
-    (game_id IN ('daily_pr', 'daily_fix') AND challenge_version = 1
-      AND challenge_id = game_id || ':v1:' || challenge_date::text)
+  CONSTRAINT game_runs_challenge_contract_check CHECK (
+    challenge_version = 1 AND challenge_id = game_id || ':v1:' || challenge_date::text
   )
 );
-CREATE UNIQUE INDEX game_runs_one_daily_result
-  ON game_runs(user_id, game_id, challenge_date)
-  WHERE game_id IN ('daily_pr', 'daily_fix');
+CREATE UNIQUE INDEX game_runs_one_daily_code_result
+  ON game_runs(user_id, challenge_date);
 CREATE INDEX game_runs_leaderboard_idx
   ON game_runs(challenge_date, game_id, normalized_score DESC, user_id);
 CREATE INDEX game_runs_user_idx ON game_runs(user_id, created_at DESC);

@@ -13,6 +13,12 @@ import { Type, type Static } from "@sinclair/typebox";
 import type pg from "pg";
 import type { Config } from "./config.js";
 import type { Database } from "./db.js";
+import { registerCompetitionRoutes } from "./competition-routes.js";
+import {
+  dailyPuzzleOffset,
+  isDailyCodeAnswerCorrect,
+  WIN_POINTS,
+} from "./competition.js";
 import { cloudflareEmailProvider, type EmailProvider } from "./email.js";
 import { officialGithubProvider, type GithubProvider } from "./github.js";
 import {
@@ -233,6 +239,8 @@ export async function buildApp(options: AppOptions) {
         "req.body.poll_token",
         "req.body.browser_token",
         "req.body.email",
+        "req.body.code",
+        "req.body.answer",
         "req.body.token",
         "device_code",
         "access_token",
@@ -1199,41 +1207,35 @@ export async function buildApp(options: AppOptions) {
         daily_rank: string | null;
         weekly_rank: string | null;
         global_rank: string | null;
-        best_stack: number;
-        daily_pr_streak: string;
-        daily_fix_this_week: string;
+        match_points: number;
+        ranked_wins: string;
+        ranked_losses: string;
       }>(
-        `WITH best AS (
-           SELECT user_id, challenge_date, game_id, max(normalized_score) points
-           FROM game_runs WHERE challenge_date <= $1 GROUP BY user_id, challenge_date, game_id
-         ), daily_totals AS (
-           SELECT user_id, challenge_date, sum(points) points FROM best
-           GROUP BY user_id, challenge_date HAVING sum(points) > 0
-         ), daily_ranks AS (
-           SELECT user_id, rank() OVER (ORDER BY points DESC) rank FROM daily_totals WHERE challenge_date = $1
+        `WITH per_day AS (
+           SELECT winner_id user_id, (completed_at AT TIME ZONE 'UTC')::date match_date,
+             count(*)::integer * ${String(WIN_POINTS)} points
+           FROM ranked_matches WHERE status = 'completed' AND winner_id IS NOT NULL
+             AND completed_at < ($1::date + interval '1 day')
+           GROUP BY winner_id, (completed_at AT TIME ZONE 'UTC')::date
+         ), daily_rankings AS (
+           SELECT user_id, rank() OVER (ORDER BY points DESC) rank FROM per_day WHERE match_date = $1
          ), weekly_totals AS (
-           SELECT user_id, sum(points) points FROM daily_totals WHERE challenge_date BETWEEN $2 AND $1 GROUP BY user_id
-         ), weekly_ranks AS (
+           SELECT user_id, sum(points) points FROM per_day WHERE match_date BETWEEN $2 AND $1 GROUP BY user_id
+         ), weekly_rankings AS (
            SELECT user_id, rank() OVER (ORDER BY points DESC) rank FROM weekly_totals
          ), all_totals AS (
-           SELECT user_id, sum(points) points FROM daily_totals GROUP BY user_id
-         ), all_ranks AS (
+           SELECT user_id, sum(points) points FROM per_day GROUP BY user_id
+         ), all_rankings AS (
            SELECT user_id, rank() OVER (ORDER BY points DESC) rank FROM all_totals
-         ), pr_days AS (
-           SELECT DISTINCT challenge_date FROM game_runs
-           WHERE user_id = $3 AND game_id = 'daily_pr' AND normalized_score > 0 AND challenge_date <= $1
-         ), pr_numbered AS (
-           SELECT challenge_date, row_number() OVER (ORDER BY challenge_date DESC) n FROM pr_days
          )
-         SELECT
-           (SELECT rank FROM daily_ranks WHERE user_id = $3) daily_rank,
-           (SELECT rank FROM weekly_ranks WHERE user_id = $3) weekly_rank,
-           (SELECT rank FROM all_ranks WHERE user_id = $3) global_rank,
-           coalesce((SELECT max(normalized_score) FROM game_runs WHERE user_id = $3 AND game_id = 'stack_overflow'), 0)::integer best_stack,
-           (SELECT count(*) FROM pr_numbered
-            WHERE (SELECT max(challenge_date) FROM pr_days) >= $1::date - 1
-              AND challenge_date = (SELECT max(challenge_date) FROM pr_days) - (n::integer - 1)) daily_pr_streak,
-           (SELECT count(DISTINCT challenge_date) FROM game_runs WHERE user_id = $3 AND game_id = 'daily_fix' AND normalized_score > 0 AND challenge_date BETWEEN $2 AND $1) daily_fix_this_week`,
+         SELECT (SELECT rank FROM daily_rankings WHERE user_id = $3) daily_rank,
+           (SELECT rank FROM weekly_rankings WHERE user_id = $3) weekly_rank,
+           (SELECT rank FROM all_rankings WHERE user_id = $3) global_rank,
+           u.match_points,
+           (SELECT count(*) FROM ranked_matches WHERE status = 'completed' AND winner_id = $3) ranked_wins,
+           (SELECT count(*) FROM ranked_matches WHERE status = 'completed'
+             AND $3 IN (player_one_id, player_two_id) AND winner_id IS DISTINCT FROM $3) ranked_losses
+         FROM users u WHERE u.id = $3`,
         [today, weekStart, request.authUser.id],
       );
       const row = stats.rows[0];
@@ -1246,9 +1248,9 @@ export async function buildApp(options: AppOptions) {
             row.weekly_rank === null ? null : Number(row.weekly_rank),
           global_rank:
             row.global_rank === null ? null : Number(row.global_rank),
-          best_stack: row.best_stack,
-          daily_pr_streak: Number(row.daily_pr_streak),
-          daily_fix_this_week: Number(row.daily_fix_this_week),
+          match_points: row.match_points,
+          ranked_wins: Number(row.ranked_wins),
+          ranked_losses: Number(row.ranked_losses),
         },
       };
     },
@@ -1281,14 +1283,55 @@ export async function buildApp(options: AppOptions) {
         return reply.status(200).send(runResponse(prior));
       }
 
+      const attemptResult = await db.query<{ completed_at: Date | null }>(
+        "SELECT completed_at FROM daily_code_attempts WHERE user_id = $1 AND puzzle_date = $2",
+        [request.authUser.id, utcDate(now())],
+      );
+      const attempt = attemptResult.rows[0];
+      if (!attempt)
+        return sendError(
+          reply,
+          409,
+          "daily_attempt_required",
+          "Start today's daily code puzzle before submitting a result",
+        );
+      if (attempt.completed_at)
+        return sendError(
+          reply,
+          409,
+          "daily_attempt_used",
+          "You have already submitted today's daily code puzzle",
+        );
+
       let challenge: ReturnType<typeof validateChallenge>;
       let normalized: number;
+      let storedResult = request.body.result;
       try {
-        challenge = validateChallenge(
-          request.body.game_id,
-          request.body.challenge,
-          now(),
+        challenge = validateChallenge(request.body.challenge, now());
+        if (!request.body.result.answer)
+          throw new Error("daily_code result.answer is required");
+        const count = await db.query<{ count: number }>(
+          "SELECT count(*)::integer AS count FROM daily_code_puzzles",
         );
+        const puzzleCount = count.rows[0]?.count ?? 0;
+        if (puzzleCount < 1)
+          throw new Error("No daily code puzzles are configured");
+        const offset = dailyPuzzleOffset(challenge.date, puzzleCount);
+        const puzzle = await db.query<{ answer: string }>(
+          "SELECT answer FROM daily_code_puzzles ORDER BY puzzle_id OFFSET $1 LIMIT 1",
+          [offset],
+        );
+        if (
+          !puzzle.rows[0] ||
+          !isDailyCodeAnswerCorrect(
+            puzzle.rows[0].answer,
+            request.body.result.answer,
+          )
+        )
+          throw new Error("daily_code answer is incorrect");
+        const safeResult = { ...request.body.result };
+        delete safeResult.answer;
+        storedResult = safeResult;
         normalized = normalizeRun({
           gameId: request.body.game_id,
           rawScore: request.body.raw_score,
@@ -1311,7 +1354,6 @@ export async function buildApp(options: AppOptions) {
           error instanceof Error ? error.message : "Invalid run",
         );
       }
-      const currentDate = utcDate(now());
       try {
         const inserted = await db.query<RunRow>(
           `INSERT INTO game_runs(
@@ -1323,18 +1365,22 @@ export async function buildApp(options: AppOptions) {
             request.body.client_run_id,
             request.authUser.id,
             request.body.game_id,
-            challenge?.date ?? currentDate,
-            challenge?.version ?? null,
-            challenge?.id ?? null,
+            challenge.date,
+            challenge.version,
+            challenge.id,
             request.body.raw_score,
             normalized,
-            request.body.result,
+            storedResult,
             request.body.duration_ms,
             request.body.client_version,
           ],
         );
         const row = inserted.rows[0];
         if (!row) throw new Error("Run insert returned no row");
+        await db.query(
+          "UPDATE daily_code_attempts SET completed_at = $3 WHERE user_id = $1 AND puzzle_date = $2 AND completed_at IS NULL",
+          [request.authUser.id, challenge.date, now()],
+        );
         return await reply.status(201).send(runResponse(row));
       } catch (error) {
         if ((error as { code?: string }).code === "23505") {
@@ -1386,10 +1432,11 @@ export async function buildApp(options: AppOptions) {
     let condition = "TRUE";
     if (from) {
       values.push(from, through);
-      condition = "r.challenge_date BETWEEN $1 AND $2";
+      condition =
+        "m.completed_at >= $1::date AND m.completed_at < ($2::date + interval '1 day')";
     } else {
       values.push(through);
-      condition = "r.challenge_date <= $1";
+      condition = "m.completed_at < ($1::date + interval '1 day')";
     }
     values.push(limit);
     const result = await db.query<{
@@ -1400,12 +1447,11 @@ export async function buildApp(options: AppOptions) {
       avatar_url: string | null;
       points: string;
     }>(
-      `WITH best AS (
-         SELECT r.user_id, r.challenge_date, r.game_id, max(r.normalized_score) points
-         FROM game_runs r WHERE ${condition} GROUP BY r.user_id, r.challenge_date, r.game_id
-         ), totals AS (
-           SELECT user_id, sum(points) points FROM best GROUP BY user_id HAVING sum(points) > 0
-       ), ranked AS (
+      `WITH totals AS (
+           SELECT m.winner_id user_id, count(*)::integer * ${String(WIN_POINTS)} points
+           FROM ranked_matches m WHERE ${condition} AND m.status = 'completed'
+             AND m.winner_id IS NOT NULL GROUP BY m.winner_id
+        ), ranked AS (
          SELECT user_id, points, rank() OVER (ORDER BY points DESC) rank FROM totals
        )
         SELECT ranked.rank, u.id, u.username, u.display_name, u.avatar_url, ranked.points FROM ranked
@@ -1546,5 +1592,11 @@ export async function buildApp(options: AppOptions) {
     },
   );
 
+  registerCompetitionRoutes(app, {
+    config,
+    db,
+    ...(email ? { email } : {}),
+    now,
+  });
   return app;
 }

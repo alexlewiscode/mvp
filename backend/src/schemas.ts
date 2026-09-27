@@ -1,10 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 
-export const GameIdSchema = Type.Union([
-  Type.Literal("stack_overflow"),
-  Type.Literal("daily_pr"),
-  Type.Literal("daily_fix"),
-]);
+export const GameIdSchema = Type.Literal("daily_code");
 export const DateSchema = Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" });
 export const ErrorSchema = Type.Object({
   error: Type.Object({ code: Type.String(), message: Type.String() }),
@@ -22,9 +18,9 @@ export const MeSchema = Type.Intersect([
       daily_rank: Type.Union([Type.Integer(), Type.Null()]),
       weekly_rank: Type.Union([Type.Integer(), Type.Null()]),
       global_rank: Type.Union([Type.Integer(), Type.Null()]),
-      best_stack: Type.Integer(),
-      daily_pr_streak: Type.Integer(),
-      daily_fix_this_week: Type.Integer(),
+      match_points: Type.Integer(),
+      ranked_wins: Type.Integer(),
+      ranked_losses: Type.Integer(),
     }),
   }),
 ]);
@@ -61,18 +57,17 @@ export const CreateRunBodySchema = Type.Object(
         attempts: Type.Optional(Type.Integer()),
         hint_used: Type.Optional(Type.Boolean()),
         height: Type.Optional(Type.Integer()),
+        answer: Type.Optional(Type.String({ maxLength: 200 })),
       },
       { additionalProperties: false },
     ),
-    challenge: Type.Optional(
-      Type.Object(
-        {
-          date: DateSchema,
-          version: Type.Integer(),
-          id: Type.String({ minLength: 1, maxLength: 80 }),
-        },
-        { additionalProperties: false },
-      ),
+    challenge: Type.Object(
+      {
+        date: DateSchema,
+        version: Type.Integer(),
+        id: Type.String({ minLength: 1, maxLength: 80 }),
+      },
+      { additionalProperties: false },
     ),
   },
   { additionalProperties: false },

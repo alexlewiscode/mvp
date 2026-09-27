@@ -1,27 +1,30 @@
 use ratatui::Frame;
-use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::app::{App, AppState, OnlineLeaderboard};
-use crate::game::daily_fix::DailyFix;
-use crate::game::daily_pr::{DailyPr, MAX_GUESSES, Mark};
+use crate::game::daily_code::DailyCodePuzzle;
 use crate::game::scoring::{format_elapsed, format_score};
-use crate::game::stack_overflow::StackOverflow;
 use crate::game::{ActiveGame, GameKind};
 
-/// Vertical space consumed by chrome: top/bottom borders (2), HUD (1) and
-/// controls footer (1). Everything else is playfield.
 const CHROME_ROWS: u16 = 4;
+const LOGO: [&str; 6] = [
+    r#" __  __   __      __  _____ "#,
+    r#"|  \/  |  \ \    / / |  __ \"#,
+    r#"| \  / |   \ \  / /  | |__) |"#,
+    r#"| |\/| |    \ \/ /   |  ___/"#,
+    r#"| |  | |     \  /    | |"#,
+    r#"|_|  |_|      \/     |_|"#,
+];
+const LOGO_WIDTH: usize = 29;
 
-/// The playfield size derived from the terminal size. Shared by the app (for
-/// viewport logic) and the renderer (for layout).
 pub fn playfield_dims(term_cols: u16, term_rows: u16) -> (u16, u16) {
-    let cols = term_cols.saturating_sub(2).max(1);
-    let rows = term_rows.saturating_sub(CHROME_ROWS).max(1);
-    (cols, rows)
+    (
+        term_cols.saturating_sub(2).max(1),
+        term_rows.saturating_sub(CHROME_ROWS).max(1),
+    )
 }
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -34,71 +37,47 @@ pub fn render(frame: &mut Frame, app: &App) {
         AppState::Leaderboard => render_leaderboard(frame, app),
         AppState::GameMenu => render_game_menu(frame, app),
         AppState::NamePrompt => render_name_prompt(frame, app),
+        AppState::DailyCodeStarting => render_daily_code_status(
+            frame,
+            app,
+            "RESERVING TODAY'S PUZZLE",
+            "Checking your one daily attempt…",
+        ),
+        AppState::DailyCodeLocked => render_daily_code_status(
+            frame,
+            app,
+            "DAILY PUZZLE ALREADY PLAYED",
+            "Come back tomorrow for the next puzzle.",
+        ),
         AppState::Playing | AppState::PausedManual | AppState::GameOver => render_game(frame, app),
+        AppState::Matchmaking => render_ranked_match(frame, app),
     }
 }
 
-// ---- menu ----------------------------------------------------------------
-
-/// FIGlet's "Big" style with full-width spacing between letters. Avoiding
-/// smushing keeps M, V and P distinct even with unusual terminal fonts.
-const LOGO: [&str; 6] = [
-    r#" __  __   __      __  _____ "#,
-    r#"|  \/  |  \ \    / / |  __ \"#,
-    r#"| \  / |   \ \  / /  | |__) |"#,
-    r#"| |\/| |    \ \/ /   |  ___/"#,
-    r#"| |  | |     \  /    | |"#,
-    r#"|_|  |_|      \/     |_|"#,
-];
-const LOGO_WIDTH: usize = 29;
-
-/// FIGlet's "doh" font, generated for `MVP`. This is intentionally large
-/// and uses each letter as its own fill character, making the word readable
-/// at a glance. Smaller terminals fall back to [`LOGO`].
-const DOH_LOGO: [&str; 16] = [
-    "MMMMMMMM               MMMMMMMMVVVVVVVV           VVVVVVVVPPPPPPPPPPPPPPPPP",
-    "M:::::::M             M:::::::MV::::::V           V::::::VP::::::::::::::::P",
-    "M::::::::M           M::::::::MV::::::V           V::::::VP::::::PPPPPP:::::P",
-    "M:::::::::M         M:::::::::MV::::::V           V::::::VPP:::::P     P:::::P",
-    "M::::::::::M       M::::::::::M V:::::V           V:::::V  PP::::P     P:::::P",
-    "M:::::::::::M     M:::::::::::M  V:::::V         V:::::V   PP::::P     P:::::P",
-    "M:::::::M::::M   M::::M:::::::M   V:::::V       V:::::V    PP::::PPPPPP:::::P",
-    "M::::::M M::::M M::::M M::::::M    V:::::V     V:::::V     PP:::::::::::::PP",
-    "M::::::M  M::::M::::M  M::::::M     V:::::V   V:::::V      PP::::PPPPPPPPP",
-    "M::::::M   M:::::::M   M::::::M      V:::::V V:::::V       PP::::PP",
-    "M::::::M    M:::::M    M::::::M       V:::::V:::::V        PP::::PP",
-    "M::::::M     MMMMM     M::::::M        V:::::::::V         PP::::PP",
-    "M::::::M               M::::::M         V:::::::V         PP::::::PP",
-    "M::::::M               M::::::M          V:::::V          P::::::::P",
-    "M::::::M               M::::::M           V:::V           P::::::::P",
-    "MMMMMMMM               MMMMMMMM            VVV            PPPPPPPPPP",
-];
-const DOH_LOGO_WIDTH: usize = 78;
-const DOH_MIN_ROWS: u16 = 34;
+fn centered(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    }
+}
 
 fn render_menu(frame: &mut Frame, app: &App) {
     let area = frame.area();
-    let wide = area.width as usize >= LOGO_WIDTH;
-
     let logo = Style::new()
         .fg(Color::LightMagenta)
         .add_modifier(Modifier::BOLD);
     let dim = Style::new().fg(Color::DarkGray);
-    let white = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
     let green = Style::new().fg(Color::Green).add_modifier(Modifier::BOLD);
-    let gold = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-
-    let mut lines: Vec<Line<'_>> = Vec::new();
-    if area.width as usize >= DOH_LOGO_WIDTH && area.height >= DOH_MIN_ROWS {
-        lines.extend(
-            DOH_LOGO
-                .iter()
-                .map(|row| Line::styled(format!("{row:<DOH_LOGO_WIDTH$}"), logo)),
-        );
-    } else if wide {
+    let white = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
+    let mut lines = Vec::new();
+    if area.width as usize >= LOGO_WIDTH {
         lines.extend(
             LOGO.iter()
-                .map(|row| Line::styled(format!("{row:<LOGO_WIDTH$}"), logo)),
+                .map(|line| Line::styled(format!("{line:<LOGO_WIDTH$}"), logo)),
         );
     } else {
         lines.push(Line::styled("M V P", logo));
@@ -107,551 +86,154 @@ fn render_menu(frame: &mut Frame, app: &App) {
     lines.push(Line::styled("MOST VALUED PROGRAMMER", dim));
     lines.push(Line::from(""));
     if let Some(mvp) = app.daily_mvp() {
-        let score_text = match &mvp.note {
-            Some(note) => note.clone(),
-            None => format_score(mvp.score),
-        };
-        lines.push(Line::from(vec![
-            Span::styled("MVP OF THE DAY  ", gold),
-            Span::styled(&mvp.name, gold),
-            Span::styled("  |  ", gold),
-            Span::styled(score_text, gold),
-            Span::styled("  |  ", gold),
-            Span::styled(mvp.game_kind().title(), gold),
-        ]));
+        let score = mvp.note.clone().unwrap_or_else(|| format_score(mvp.score));
+        lines.push(Line::styled(
+            format!("DAILY PUZZLE MVP  {}  |  {}", mvp.name, score),
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ));
         lines.push(Line::from(""));
     }
     lines.push(Line::from(vec![
         Span::styled("PLAYING AS ", dim),
         Span::styled(app.player_name(), white),
     ]));
-    lines.push(Line::from(""));
     if let Some(message) = app.account_message() {
-        lines.push(Line::styled(message, dim));
         lines.push(Line::from(""));
+        lines.push(Line::styled(message, dim));
     }
+    lines.push(Line::from(""));
     lines.push(Line::styled("[ ENTER ] PLAY", green));
     if app.best_score() > 0 {
-        lines.push(Line::from(""));
         lines.push(Line::styled(
-            format!("BEST {}", format_score(app.best_score())),
+            format!(
+                "BEST {}",
+                format_elapsed((1_000_000_000 - app.best_score()) as f64 / 1000.0)
+            ),
             dim,
         ));
     }
-
-    let menu_areas = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
-    let content = menu_areas[0];
-    let footer = menu_areas[1];
+    let areas = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
     let total = lines.len() as u16;
-    let vertical = Layout::vertical([
-        Constraint::Length(content.height.saturating_sub(total) / 2),
+    let content = Layout::vertical([
+        Constraint::Length(areas[0].height.saturating_sub(total) / 2),
         Constraint::Length(total),
         Constraint::Min(0),
     ])
-    .split(content);
-    let paragraph = Paragraph::new(lines).alignment(Alignment::Center);
-    frame.render_widget(paragraph, vertical[1]);
+    .split(areas[0]);
+    frame.render_widget(
+        Paragraph::new(lines).alignment(Alignment::Center),
+        content[1],
+    );
     let account = if app.online_username().is_some() {
-        "[ I ] ACCOUNT"
+        "[ I ] PROFILE"
     } else {
         "[ I ] SIGN IN"
     };
     frame.render_widget(
         Paragraph::new(format!(
-            "[ L ] LEADERBOARD    {account}    [ N ] CHANGE NAME    [ Q ] QUIT"
+            "[ L ] LEADERBOARD    [ M ] RANKED 1v1    {account}    [ N ] NAME    [ Q ] QUIT"
         ))
         .style(dim)
         .alignment(Alignment::Center),
-        footer,
+        areas[1],
     );
-}
-
-fn render_leaderboard(frame: &mut Frame, app: &App) {
-    let area = frame.area();
-    let title = Style::new().fg(Color::Magenta).add_modifier(Modifier::BOLD);
-    let white = Style::new().fg(Color::White);
-    let dim = Style::new().fg(Color::DarkGray);
-    let green = Style::new().fg(Color::Green);
-    let yellow = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-    let mut lines = vec![
-        Line::styled("MVP - DAILY LEADERBOARD", title),
-        Line::from(""),
-    ];
-
-    match app.online_leaderboard() {
-        OnlineLeaderboard::NotLoaded | OnlineLeaderboard::Loading => {
-            lines.push(Line::styled("Loading global leaderboard...", dim));
-        }
-        OnlineLeaderboard::Unavailable => {
-            lines.push(Line::styled("Global leaderboard unavailable.", yellow));
-            lines.push(Line::styled("Local scores are still available.", dim));
-            lines.push(Line::from(""));
-            lines.push(Line::styled("OFFLINE", dim));
-        }
-        OnlineLeaderboard::Available(board) => {
-            lines.push(Line::styled("  #   Programmer                 MVP", dim));
-            let username = app.online_username();
-            for entry in &board.entries {
-                let mine =
-                    username.is_some_and(|name| name.eq_ignore_ascii_case(&entry.user.username));
-                let style = if mine { yellow } else { white };
-                lines.push(Line::styled(
-                    format!(
-                        "{:>3}   {:<22} {:>8}",
-                        entry.rank,
-                        entry.user.username.chars().take(22).collect::<String>(),
-                        format_score(entry.points.max(0) as u64)
-                    ),
-                    style,
-                ));
-            }
-            lines.push(Line::from(""));
-            if let Some(name) = username {
-                let rank = board
-                    .entries
-                    .iter()
-                    .find(|entry| entry.user.username.eq_ignore_ascii_case(name))
-                    .map(|entry| format!("#{}", entry.rank))
-                    .unwrap_or_else(|| "outside top 10".to_string());
-                lines.push(Line::styled(format!("YOU: {rank}"), yellow));
-            } else {
-                lines.push(Line::styled(
-                    "Sign in with `mvp login` to submit scores.",
-                    dim,
-                ));
-            }
-            lines.push(Line::styled("ONLINE", green));
-        }
-    }
-    lines.push(Line::from(""));
-    lines.push(Line::styled("[ ESC ] BACK", dim));
-
-    let total = lines.len() as u16;
-    let vertical = Layout::vertical([
-        Constraint::Length(area.height.saturating_sub(total) / 2),
-        Constraint::Length(total.min(area.height)),
-        Constraint::Min(0),
-    ])
-    .split(area);
-    frame.render_widget(
-        Paragraph::new(lines).alignment(Alignment::Center),
-        vertical[1],
-    );
-}
-
-// ---- name prompt ---------------------------------------------------------
-
-fn render_name_prompt(frame: &mut Frame, app: &App) {
-    let area = frame.area();
-
-    let magenta = Style::new().fg(Color::Magenta);
-    let dim = Style::new().fg(Color::DarkGray);
-    let white = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
-
-    let mut lines: Vec<Line<'_>> = Vec::new();
-    lines.push(Line::styled(
-        "WHO IS THE MVP?",
-        magenta.add_modifier(Modifier::BOLD),
-    ));
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::raw("> "),
-        Span::styled(format!("{}▌", app.name_buffer()), white),
-    ]));
-    lines.push(Line::from(""));
-    lines.push(Line::styled("YOUR NAME GOES ON TODAY'S MVP BOARD", dim));
-    lines.push(Line::styled(
-        if app.has_player_name() {
-            "[ ENTER ] SAVE    [ ESC ] CANCEL"
-        } else {
-            "[ ENTER ] SAVE    NAME REQUIRED TO PLAY"
-        },
-        dim,
-    ));
-
-    let total = lines.len() as u16;
-    let vertical = Layout::vertical([
-        Constraint::Length(area.height.saturating_sub(total) / 2),
-        Constraint::Length(total),
-        Constraint::Min(0),
-    ])
-    .split(area);
-    let paragraph = Paragraph::new(lines).alignment(Alignment::Center);
-    frame.render_widget(paragraph, vertical[1]);
-}
-
-// ---- game menu ------------------------------------------------------------
-
-/// The best score for a game, rendered in the game's own units: raw score
-/// for Stack Overflow, guess count for The Daily PR, and time for The Daily
-/// Fix (normalized board scores are interpreted back).
-fn best_line(kind: GameKind, best: u64) -> String {
-    if best == 0 {
-        return "BEST 0".to_string();
-    }
-    match kind {
-        GameKind::StackOverflow => format!("BEST {}", format_score(best)),
-        GameKind::DailyPr => {
-            format!("BEST {} GUESSES", 7 - best / 1_000_000)
-        }
-        GameKind::DailyFix => {
-            format!(
-                "BEST {}",
-                format_elapsed((1_000_000_000 - best) as f64 / 1000.0)
-            )
-        }
-    }
 }
 
 fn render_game_menu(frame: &mut Frame, app: &App) {
-    let area = frame.area();
-
-    let magenta = Style::new().fg(Color::Magenta);
     let dim = Style::new().fg(Color::DarkGray);
     let white = Style::new().fg(Color::White);
-    let selected_style = Style::new().fg(Color::Green).add_modifier(Modifier::BOLD);
-    let best_style = Style::new().fg(Color::Yellow);
-
-    let mut lines: Vec<Line<'_>> = Vec::new();
-    lines.push(Line::styled(
-        "CHOOSE YOUR GAME",
-        magenta.add_modifier(Modifier::BOLD),
-    ));
-    lines.push(Line::from(""));
+    let selected = Style::new().fg(Color::Green).add_modifier(Modifier::BOLD);
+    let mut lines = vec![
+        Line::styled(
+            "CHOOSE YOUR MODE",
+            Style::new().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+        ),
+        Line::from(""),
+    ];
     for kind in GameKind::ALL {
-        let selected = kind == app.selected_kind();
-        let marker = if selected { "▶" } else { " " };
+        let active = kind == app.selected_kind();
         lines.push(Line::from(vec![
-            Span::styled(marker, selected_style),
+            Span::styled(if active { "▶" } else { " " }, selected),
             Span::raw(" "),
-            Span::styled(kind.title(), if selected { selected_style } else { white }),
+            Span::styled(kind.title(), if active { selected } else { white }),
             Span::raw("  "),
             Span::styled(kind.blurb(), dim),
-            Span::raw("  "),
-            Span::styled(best_line(kind, app.best_score_for(kind)), best_style),
         ]));
     }
     lines.push(Line::from(""));
     lines.push(Line::styled("↑/↓ SELECT    ENTER PLAY    ESC BACK", dim));
-
-    let total = lines.len() as u16;
-    let vertical = Layout::vertical([
-        Constraint::Length(area.height.saturating_sub(total) / 2),
-        Constraint::Length(total),
-        Constraint::Min(0),
-    ])
-    .split(area);
-    let paragraph = Paragraph::new(lines).alignment(Alignment::Center);
-    frame.render_widget(paragraph, vertical[1]);
+    frame.render_widget(
+        Paragraph::new(lines).alignment(Alignment::Center),
+        centered(frame.area(), frame.area().width, 8),
+    );
 }
 
-// ---- game ----------------------------------------------------------------
-
-fn render_game(frame: &mut Frame, app: &App) {
-    let Some(game) = app.game() else {
-        render_menu(frame, app);
-        return;
-    };
-    match game {
-        ActiveGame::StackOverflow(game) => render_stack_overflow(frame, app, game),
-        ActiveGame::DailyPr(game) => render_daily_pr(frame, app, game),
-        ActiveGame::DailyFix(game) => render_daily_fix(frame, app, game),
-    }
+fn render_name_prompt(frame: &mut Frame, app: &App) {
+    let dim = Style::new().fg(Color::DarkGray);
+    let white = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
+    let lines = vec![
+        Line::styled(
+            "WHO IS THE MVP?",
+            Style::new().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+        ),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("> "),
+            Span::styled(format!("{}▌", app.name_buffer()), white),
+        ]),
+        Line::from(""),
+        Line::styled("YOUR NAME GOES ON THE DAILY PUZZLE BOARD", dim),
+        Line::styled(
+            if app.has_player_name() {
+                "[ ENTER ] SAVE    [ ESC ] CANCEL"
+            } else {
+                "[ ENTER ] SAVE    NAME REQUIRED TO PLAY"
+            },
+            dim,
+        ),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines).alignment(Alignment::Center),
+        centered(frame.area(), frame.area().width, 8),
+    );
 }
 
-/// Draws the shared chrome (bordered frame, HUD, controls) plus the
-/// pause and game-over overlays on top of a game's custom body.
-fn render_game_frame(
-    frame: &mut Frame,
-    app: &App,
-    title: &'static str,
-    body: &dyn Fn(&mut Frame, Rect),
-    controls: &'static str,
-    hud: Line<'static>,
-) {
+fn render_daily_code_status(frame: &mut Frame, app: &App, title: &str, fallback: &str) {
+    let dim = Style::new().fg(Color::DarkGray);
+    let green = Style::new().fg(Color::Green).add_modifier(Modifier::BOLD);
+    let message = app.daily_code_message().unwrap_or(fallback);
+    let lines = vec![
+        Line::styled(title, green),
+        Line::from(""),
+        Line::styled(message.to_string(), dim),
+        Line::from(""),
+        Line::styled("ENTER / ESC BACK", dim),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines).alignment(Alignment::Center),
+        centered(frame.area(), frame.area().width.min(72), 7),
+    );
+}
+
+fn render_daily_puzzle(frame: &mut Frame, app: &App, game: &DailyCodePuzzle) {
     let area = frame.area();
-    let block = Block::bordered()
-        .border_style(Style::new().fg(Color::DarkGray))
-        .title(Line::styled(
-            format!(" {title} "),
-            Style::new().fg(Color::Magenta),
-        ));
+    let dim = Style::new().fg(Color::DarkGray);
+    let red = Style::new().fg(Color::Red);
+    let white = Style::new().fg(Color::White);
+    let yellow = Style::new().fg(Color::Yellow);
+    let green = Style::new().fg(Color::Green).add_modifier(Modifier::BOLD);
+    let block = Block::bordered().border_style(dim).title(Line::styled(
+        " DAILY CODE PUZZLE ",
+        Style::new().fg(Color::Magenta),
+    ));
     let inner = block.inner(area);
-    let layout = Layout::vertical([
-        Constraint::Length(1), // HUD
-        Constraint::Min(1),    // game body
-        Constraint::Length(1), // controls
+    let rows = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(1),
     ])
     .split(inner);
-
-    frame.render_widget(hud_paragraph(hud, app), layout[0]);
-    body(frame, layout[1]);
-    frame.render_widget(controls_paragraph(controls), layout[2]);
-    frame.render_widget(block, area);
-
-    match app.state {
-        AppState::PausedManual => render_paused(frame, area, app),
-        AppState::GameOver => render_game_over(frame, area, app),
-        AppState::Playing
-        | AppState::Menu
-        | AppState::Leaderboard
-        | AppState::GameMenu
-        | AppState::NamePrompt => {}
-    }
-}
-
-fn hud_paragraph(line: Line<'static>, _app: &App) -> Paragraph<'static> {
-    Paragraph::new(line)
-}
-
-fn controls_paragraph(text: &'static str) -> Paragraph<'static> {
-    let dim = Style::new().fg(Color::DarkGray);
-    Paragraph::new(Line::styled(text, dim)).alignment(Alignment::Center)
-}
-
-// ---- Stack Overflow --------------------------------------------------------
-
-fn render_stack_overflow(frame: &mut Frame, app: &App, game: &StackOverflow) {
-    render_game_frame(
-        frame,
-        app,
-        "STACK OVERFLOW",
-        &|frame, area| render_stack_body(frame.buffer_mut(), area, game),
-        "SPACE drop    P pause    R restart    ESC menu    Q quit",
-        stack_hud(game, app),
-    );
-}
-
-fn stack_hud(game: &StackOverflow, app: &App) -> Line<'static> {
-    let white = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
-    let dim = Style::new().fg(Color::DarkGray);
-    let yellow = Style::new().fg(Color::Yellow);
-    let combo = if game.perfect_streak() > 0 {
-        format!("   COMBO x{}", game.perfect_streak())
-    } else {
-        String::new()
-    };
-    Line::from(vec![
-        Span::styled(format!("SCORE {}", format_score(game.score())), white),
-        Span::raw("   "),
-        Span::styled(format!("HEIGHT {}", game.height()), dim),
-        Span::raw("   "),
-        Span::styled(
-            format!(
-                "BEST {}",
-                format_score(
-                    app.best_score_for(GameKind::StackOverflow)
-                        .max(game.score())
-                )
-            ),
-            yellow,
-        ),
-        Span::styled(
-            combo,
-            Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
-        ),
-    ])
-}
-
-/// Basic ANSI colors cycled by absolute layer depth. These render on every
-/// terminal, unlike 256-color indexed shades which silently degrade.
-const LAYER_COLORS: [Color; 8] = [
-    Color::Red,
-    Color::Yellow,
-    Color::Green,
-    Color::Cyan,
-    Color::Blue,
-    Color::Magenta,
-    Color::LightRed,
-    Color::LightCyan,
-];
-
-/// The stacker's body: the tower, the sliding block and the direction
-/// arrow. The tower scrolls: only the layers near the top are visible.
-fn render_stack_body(buf: &mut Buffer, area: Rect, game: &StackOverflow) {
-    let all_layers = game.layers();
-    let visible = (area.height.saturating_sub(2)) as usize;
-    let skip = all_layers.len().saturating_sub(visible);
-    let shown = &all_layers[skip..];
-
-    let dim = Style::new().fg(Color::DarkGray);
-    let block_style = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
-
-    // Ground line.
-    for x in area.left()..area.right() {
-        buf[(x, area.bottom() - 1)].set_symbol("─").set_style(dim);
-    }
-
-    // The stack, bottom layers first so the newest sits on top. Depth is
-    // counted from the absolute bottom of the tower so the color pattern
-    // stays stable while the viewport scrolls.
-    let base_row = area.bottom().saturating_sub(2);
-    for (i, layer) in shown.iter().enumerate() {
-        let row = base_row.saturating_sub(i as u16);
-        let depth = skip + i;
-        let style = Style::new().fg(LAYER_COLORS[depth % LAYER_COLORS.len()]);
-        fill_row(buf, area, row, layer.left, layer.width, "█", style);
-    }
-
-    // The sliding block floats one row above the newest layer, rising with
-    // the stack until the playfield fills up.
-    let block_row = base_row.saturating_sub(shown.len() as u16);
-    let top = game.top_layer();
-    let offset = game.block_offset().round() as i32;
-    let arrow = if game.direction() > 0 { ">" } else { "<" };
-    let block_left = top.left + offset;
-    if block_row >= area.top() && block_row < area.bottom() {
-        fill_row(
-            buf,
-            area,
-            block_row,
-            block_left,
-            top.width,
-            "█",
-            block_style,
-        );
-        // Draw the arrow at the leading edge, just outside the block.
-        let arrow_col = if game.direction() > 0 {
-            block_left + top.width
-        } else {
-            block_left - 1
-        };
-        if arrow_col >= i32::from(area.left()) && arrow_col < i32::from(area.right()) {
-            buf[(arrow_col as u16, block_row)]
-                .set_symbol(arrow)
-                .set_style(block_style);
-        }
-    }
-}
-
-/// Fills `width` cells starting at `left` with a symbol.
-fn fill_row(
-    buf: &mut Buffer,
-    area: Rect,
-    row: u16,
-    left: i32,
-    width: i32,
-    symbol: &str,
-    style: Style,
-) {
-    if row < area.top() || row >= area.bottom() {
-        return;
-    }
-    for x in left.max(i32::from(area.left()))..(left + width).min(i32::from(area.right())) {
-        buf[(x as u16, row)].set_symbol(symbol).set_style(style);
-    }
-}
-
-// ---- The Daily PR ----------------------------------------------------------
-
-fn render_daily_pr(frame: &mut Frame, app: &App, game: &DailyPr) {
-    render_game_frame(
-        frame,
-        app,
-        "THE DAILY PR",
-        &|frame, area| render_pr_body(frame, area, game),
-        "TYPE GUESS    ⌫ DELETE    ENTER SUBMIT    ESC MENU",
-        pr_hud(game, app),
-    );
-}
-
-fn pr_hud(game: &DailyPr, app: &App) -> Line<'static> {
-    let white = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
-    let dim = Style::new().fg(Color::DarkGray);
-    let yellow = Style::new().fg(Color::Yellow);
-    let best = app.best_score_for(GameKind::DailyPr);
-    let best_text = if best == 0 {
-        "BEST —".to_string()
-    } else {
-        format!("BEST {} GUESSES", 7 - best / 1_000_000)
-    };
-    Line::from(vec![
-        Span::styled(format!("COMMIT #{}", game.commit_number()), white),
-        Span::raw("   "),
-        Span::styled(format!("GUESS {}/{}", game.guesses(), MAX_GUESSES), dim),
-        Span::raw("   "),
-        Span::styled(best_text, yellow),
-    ])
-}
-
-fn mark_symbol(mark: Mark) -> (&'static str, Style) {
-    match mark {
-        Mark::Correct => (
-            "G",
-            Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
-        ),
-        Mark::Present => (
-            "?",
-            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-        ),
-        Mark::Absent => ("·", Style::new().fg(Color::DarkGray)),
-    }
-}
-
-fn render_pr_body(frame: &mut Frame, area: Rect, game: &DailyPr) {
-    let white = Style::new().fg(Color::White);
-    let dim = Style::new().fg(Color::DarkGray);
-
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    for guess in game.guesses_used() {
-        let word_line = Line::from(
-            guess
-                .word
-                .chars()
-                .map(|c| Span::styled(c.to_string(), white))
-                .collect::<Vec<_>>(),
-        );
-        let marks_line = Line::from(
-            guess
-                .marks
-                .iter()
-                .map(|m| {
-                    let (symbol, style) = mark_symbol(*m);
-                    Span::styled(symbol.to_string(), style)
-                })
-                .collect::<Vec<_>>(),
-        );
-        lines.push(word_line);
-        lines.push(marks_line);
-    }
-    if game.locked() {
-        lines.push(Line::from(""));
-    } else {
-        lines.push(Line::from(vec![
-            Span::raw("> "),
-            Span::styled(format!("{}▌", game.input()), white),
-            Span::styled(" ".repeat(5 - game.input().chars().count().min(5)), dim),
-        ]));
-        if let Some(status) = game.status() {
-            lines.push(Line::styled(status, Style::new().fg(Color::Red)));
-        }
-    }
-
-    let width = 20.min(area.width);
-    let height = (lines.len() as u16).min(area.height);
-    let board_area = centered_fixed(area, width, height);
-    let paragraph = Paragraph::new(lines).alignment(Alignment::Center);
-    frame.render_widget(paragraph, board_area);
-}
-
-// ---- The Daily Fix ---------------------------------------------------------
-
-fn render_daily_fix(frame: &mut Frame, app: &App, game: &DailyFix) {
-    render_game_frame(
-        frame,
-        app,
-        "THE DAILY FIX",
-        &|frame, area| render_fix_body(frame, area, game),
-        "TYPE FIX    ⌫ DELETE    ENTER SUBMIT    ESC MENU",
-        fix_hud(game, app),
-    );
-}
-
-fn fix_hud(game: &DailyFix, app: &App) -> Line<'static> {
-    let white = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
-    let dim = Style::new().fg(Color::DarkGray);
-    let yellow = Style::new().fg(Color::Yellow);
-    let best = app.best_score_for(GameKind::DailyFix);
+    let best = app.best_score_for(GameKind::DailyCode);
     let best_text = if best == 0 {
         "BEST —".to_string()
     } else {
@@ -660,68 +242,229 @@ fn fix_hud(game: &DailyFix, app: &App) -> Line<'static> {
             format_elapsed((1_000_000_000 - best) as f64 / 1000.0)
         )
     };
-    Line::from(vec![
-        Span::styled(
-            format!("TIME {}", format_elapsed(game.total_seconds())),
-            white,
-        ),
-        Span::raw("   "),
-        Span::styled(format!("ATTEMPTS {}", game.attempts()), dim),
-        Span::raw("   "),
-        Span::styled(best_text, yellow),
-    ])
-}
-
-fn render_fix_body(frame: &mut Frame, area: Rect, game: &DailyFix) {
-    let dim = Style::new().fg(Color::DarkGray);
-    let red = Style::new().fg(Color::Red);
-    let white = Style::new().fg(Color::White);
-    let yellow = Style::new().fg(Color::Yellow);
-
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    let bug = game.bug();
-    for (i, line) in bug.lines.iter().enumerate() {
-        let buggy = i == bug.buggy_line;
-        let number = Span::styled(format!("{:>2} ", i + 1), dim);
-        let marker = if buggy {
-            Span::styled("BUG ▸ ", red)
-        } else {
-            Span::styled("      ", dim)
-        };
-        lines.push(Line::from(vec![
-            number,
-            marker,
-            Span::styled(*line, if buggy { red } else { white }),
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                format!("TIME {}", format_elapsed(game.total_seconds())),
+                white,
+            ),
+            Span::raw("   "),
+            Span::styled(format!("ATTEMPTS {}", game.attempts()), dim),
+            Span::raw("   "),
+            Span::styled(best_text, yellow),
+        ])),
+        rows[0],
+    );
+    let puzzle = game.bug();
+    let mut body: Vec<Line<'static>> = Vec::new();
+    body.push(Line::styled(
+        format!("{}  ·  difficulty {}", puzzle.title, puzzle.difficulty),
+        white.add_modifier(Modifier::BOLD),
+    ));
+    body.push(Line::from(""));
+    for (index, source) in puzzle.lines.iter().enumerate() {
+        let is_broken = index == puzzle.buggy_line;
+        body.push(Line::from(vec![
+            Span::styled(format!("{:>2} ", index + 1), dim),
+            Span::styled(
+                if is_broken { "BUG ▸ " } else { "      " },
+                if is_broken { red } else { dim },
+            ),
+            Span::styled(*source, if is_broken { red } else { white }),
         ]));
     }
     if game.hint_shown() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
+        body.push(Line::from(""));
+        body.push(Line::from(vec![
             Span::styled("HINT  ", yellow),
-            Span::styled(bug.hint, dim),
+            Span::styled(puzzle.hint, dim),
         ]));
     }
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::raw("fix ▸ "),
+    body.push(Line::from(""));
+    body.push(Line::from(vec![
+        Span::styled("FIX ▸ ", green),
         Span::styled(format!("{}▌", game.input()), white),
     ]));
-
-    let width = bug
+    if let Some(message) = app.daily_code_message() {
+        body.push(Line::styled(message.to_string(), yellow));
+    }
+    let width = puzzle
         .lines
         .iter()
         .map(|line| line.chars().count() + 9)
         .chain(std::iter::once(game.input().chars().count() + 7))
-        .chain(game.hint_shown().then(|| bug.hint.chars().count() + 6))
         .max()
         .unwrap_or(1)
-        .min(area.width as usize) as u16;
-    let height = (lines.len() as u16).min(area.height);
-    let code_area = centered_fixed(area, width, height);
-    frame.render_widget(Paragraph::new(lines), code_area);
+        .min(inner.width as usize) as u16;
+    frame.render_widget(
+        Paragraph::new(body),
+        centered(rows[1], width, rows[1].height),
+    );
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            "TYPE FIX    ⌫ DELETE    ENTER SUBMIT    ESC MENU",
+            dim,
+        ))
+        .alignment(Alignment::Center),
+        rows[2],
+    );
+    frame.render_widget(block, area);
 }
 
-// ---- overlays --------------------------------------------------------------
+fn render_ranked_match(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    let title = Style::new().fg(Color::Magenta).add_modifier(Modifier::BOLD);
+    let dim = Style::new().fg(Color::DarkGray);
+    let green = Style::new().fg(Color::Green).add_modifier(Modifier::BOLD);
+    let white = Style::new().fg(Color::White);
+    let mut lines = vec![Line::styled("RANKED 1v1", title), Line::from("")];
+    let state = app.ranked_match();
+    match state {
+        Some(state) if state.status == "waiting" => {
+            lines.push(Line::styled("FINDING AN OPPONENT", green));
+            lines.push(Line::from(""));
+            lines.push(Line::styled(
+                "Matching you with a similarly skilled developer…",
+                dim,
+            ));
+        }
+        Some(state) if state.status == "active" => {
+            lines.push(Line::styled(
+                format!(
+                    "MATCHED AGAINST @{}",
+                    state.opponent.as_deref().unwrap_or("PLAYER")
+                ),
+                green,
+            ));
+            lines.push(Line::styled(
+                "Solve the highlighted line first to win.",
+                dim,
+            ));
+            lines.push(Line::from(""));
+            if let Some(puzzle) = &state.puzzle {
+                lines.push(Line::styled(
+                    puzzle.title.clone(),
+                    white.add_modifier(Modifier::BOLD),
+                ));
+                for (index, source) in puzzle.snippet.iter().enumerate() {
+                    let marker = if index == puzzle.buggy_line {
+                        "▸ "
+                    } else {
+                        "  "
+                    };
+                    let style = if index == puzzle.buggy_line {
+                        Style::new().fg(Color::Yellow)
+                    } else {
+                        dim
+                    };
+                    lines.push(Line::styled(format!("{marker}{source}"), style));
+                }
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![
+                    Span::styled("FIX ▸ ", green),
+                    Span::styled(format!("{}▌", app.ranked_answer()), white),
+                ]));
+                lines.push(Line::styled(
+                    format!("WRONG SUBMISSIONS {}", app.ranked_attempts()),
+                    dim,
+                ));
+            }
+        }
+        Some(state) if state.status == "completed" => {
+            let message = match state.result.as_deref() {
+                Some("won") => "YOU WON  +100 MATCH POINTS",
+                Some("lost") => "MATCH LOST  —  QUEUE AGAIN TO REMATCH",
+                _ => "MATCH COMPLETE",
+            };
+            lines.push(Line::styled(message, green));
+            lines.push(Line::from(""));
+            lines.push(Line::styled("Press ENTER to find another opponent.", dim));
+        }
+        _ => {
+            lines.push(Line::styled("RANKED MATCH QUEUE", green));
+            lines.push(Line::from(""));
+            lines.push(Line::styled(
+                "Sign in to find an opponent and submit ranked results.",
+                dim,
+            ));
+            lines.push(Line::styled(
+                "Press ENTER to retry. ESC returns to the menu.",
+                dim,
+            ));
+        }
+    }
+    if let Some(message) = app.ranked_message() {
+        lines.push(Line::from(""));
+        lines.push(Line::styled(message.to_string(), dim));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::styled("ENTER SUBMIT / QUEUE AGAIN    ESC BACK", dim));
+    let height = (lines.len() as u16).min(area.height);
+    frame.render_widget(
+        Paragraph::new(lines).alignment(Alignment::Center),
+        centered(area, area.width.min(88), height),
+    );
+}
+
+fn render_leaderboard(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    let title = Style::new().fg(Color::Magenta).add_modifier(Modifier::BOLD);
+    let dim = Style::new().fg(Color::DarkGray);
+    let green = Style::new().fg(Color::Green);
+    let mut lines = vec![
+        Line::styled("MATCH-POINT LEADERBOARD", title),
+        Line::from(""),
+    ];
+    match app.online_leaderboard() {
+        OnlineLeaderboard::NotLoaded | OnlineLeaderboard::Loading => {
+            lines.push(Line::styled("Loading leaderboard…", dim));
+        }
+        OnlineLeaderboard::Unavailable => {
+            lines.push(Line::styled("Leaderboard unavailable.", dim));
+            lines.push(Line::styled(
+                "You can still solve the daily puzzle offline.",
+                dim,
+            ));
+        }
+        OnlineLeaderboard::Available(board) => {
+            lines.push(Line::styled(
+                "  #   Developer                    MATCH POINTS",
+                dim,
+            ));
+            for entry in &board.entries {
+                lines.push(Line::from(format!(
+                    "{:>3}   {:<24} {:>8}",
+                    entry.rank,
+                    entry.user.display_name,
+                    format_score(entry.points.max(0) as u64),
+                )));
+            }
+            if let Some(name) = app.online_username() {
+                lines.push(Line::from(""));
+                lines.push(Line::styled(format!("SIGNED IN AS @{name}"), green));
+            }
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::styled("[ ESC ] BACK", dim));
+    frame.render_widget(
+        Paragraph::new(lines).alignment(Alignment::Center),
+        centered(area, area.width, area.height.min(18)),
+    );
+}
+
+fn render_game(frame: &mut Frame, app: &App) {
+    let Some(ActiveGame::DailyCode(game)) = app.game() else {
+        render_menu(frame, app);
+        return;
+    };
+    render_daily_puzzle(frame, app, game);
+    match app.state {
+        AppState::PausedManual => render_paused(frame, frame.area(), app),
+        AppState::GameOver => render_game_over(frame, frame.area(), app, game),
+        _ => {}
+    }
+}
 
 fn render_paused(frame: &mut Frame, area: Rect, _app: &App) {
     let lines = vec![
@@ -732,8 +475,7 @@ fn render_paused(frame: &mut Frame, area: Rect, _app: &App) {
         Line::from(""),
         Line::styled("P resume    ESC menu", Style::new().fg(Color::DarkGray)),
     ];
-    let height = lines.len() as u16 + 2;
-    let rect = centered_fixed(area, 40, height);
+    let rect = centered(area, 40, lines.len() as u16 + 2);
     frame.render_widget(Clear, rect);
     let block = Block::bordered().border_style(Style::new().fg(Color::Yellow));
     let inner = block.inner(rect);
@@ -741,122 +483,43 @@ fn render_paused(frame: &mut Frame, area: Rect, _app: &App) {
     frame.render_widget(block, rect);
 }
 
-fn render_game_over(frame: &mut Frame, area: Rect, app: &App) {
-    let Some(game) = app.game() else {
-        return;
-    };
-
-    let mut lines: Vec<Line<'static>> = vec![
+fn render_game_over(frame: &mut Frame, area: Rect, app: &App, game: &DailyCodePuzzle) {
+    let mut lines = vec![
         Line::styled(
-            "GAME OVER",
-            Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+            "PUZZLE SOLVED",
+            Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
         ),
         Line::from(""),
+        Line::styled(
+            format!("TIME  {}", format_elapsed(game.total_seconds())),
+            Style::new().fg(Color::White),
+        ),
+        Line::styled(
+            format!("ATTEMPTS  {}", game.attempts()),
+            Style::new().fg(Color::DarkGray),
+        ),
+        Line::styled(game.bug().explainer, Style::new().fg(Color::DarkGray)),
     ];
-    match game {
-        ActiveGame::StackOverflow(game) => {
-            lines.push(Line::styled(
-                format!("SCORE {}", format_score(game.score())),
-                Style::new().fg(Color::White),
-            ));
-            lines.push(Line::styled(
-                format!(
-                    "HEIGHT {}   PERFECTS x{}",
-                    game.height(),
-                    game.perfect_streak()
-                ),
-                Style::new().fg(Color::DarkGray),
-            ));
-            lines.push(Line::styled(
-                format!("TIME  {}", format_elapsed(game.elapsed())),
-                Style::new().fg(Color::DarkGray),
-            ));
-        }
-        ActiveGame::DailyPr(game) => {
-            match game.state() {
-                crate::game::daily_pr::PrState::Solved => {
-                    lines.push(Line::styled(
-                        format!("SOLVED IN {} GUESSES", game.guesses()),
-                        Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
-                    ));
-                }
-                crate::game::daily_pr::PrState::Failed => {
-                    lines.push(Line::styled(
-                        format!("THE WORD WAS {}", game.word()),
-                        Style::new().fg(Color::White),
-                    ));
-                }
-                crate::game::daily_pr::PrState::Playing => {}
-            }
-            lines.push(Line::styled(
-                format!("TIME  {}", format_elapsed(game.elapsed())),
-                Style::new().fg(Color::DarkGray),
-            ));
-        }
-        ActiveGame::DailyFix(game) => {
-            lines.push(Line::styled(
-                format!("FIXED IN {}", format_elapsed(game.total_seconds())),
-                Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
-            ));
-            lines.push(Line::styled(
-                format!(
-                    "{} ATTEMPTS   {}",
-                    game.attempts(),
-                    if game.hint_shown() {
-                        "HINT USED"
-                    } else {
-                        "NO HINT"
-                    }
-                ),
-                Style::new().fg(Color::DarkGray),
-            ));
-            lines.push(Line::styled(
-                game.bug().explainer,
-                Style::new().fg(Color::DarkGray),
-            ));
-        }
-    }
     if app.is_new_record() {
         lines.push(Line::styled(
-            "NEW BEST!",
+            "NEW DAILY BEST!",
             Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
         ));
     }
     if app.mvp_just_set() {
         lines.push(Line::styled(
-            "MVP OF THE DAY!",
+            "DAILY MVP!",
             Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
         ));
     }
     lines.push(Line::from(""));
-    lines.push(Line::styled(
-        "[R] PLAY AGAIN",
-        Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
-    ));
     lines.push(Line::styled("[ESC] MENU", Style::new().fg(Color::DarkGray)));
-
-    let height = lines.len() as u16 + 2;
-    let rect = centered_fixed(area, 34, height);
+    let rect = centered(area, 48, lines.len() as u16 + 2);
     frame.render_widget(Clear, rect);
-    let block = Block::bordered().border_style(Style::new().fg(Color::Red));
+    let block = Block::bordered().border_style(Style::new().fg(Color::Green));
     let inner = block.inner(rect);
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), inner);
     frame.render_widget(block, rect);
-}
-
-// ---- shared helpers --------------------------------------------------------
-
-fn centered_fixed(area: Rect, width: u16, height: u16) -> Rect {
-    let width = width.min(area.width);
-    let height = height.min(area.height);
-    let x = area.x + (area.width - width) / 2;
-    let y = area.y + (area.height - height) / 2;
-    Rect {
-        x,
-        y,
-        width,
-        height,
-    }
 }
 
 fn render_too_small(frame: &mut Frame, app: &App) {
@@ -871,17 +534,9 @@ fn render_too_small(frame: &mut Frame, app: &App) {
         Line::from(format!("Current size: {cols}×{rows}")),
         Line::from("Resize the terminal to keep playing."),
     ];
-    let area = frame.area();
-    let total = lines.len() as u16;
-    let vertical = Layout::vertical([
-        Constraint::Length(area.height.saturating_sub(total) / 2),
-        Constraint::Length(total),
-        Constraint::Min(0),
-    ])
-    .split(area);
     frame.render_widget(
         Paragraph::new(lines).alignment(Alignment::Center),
-        vertical[1],
+        centered(frame.area(), frame.area().width, 6),
     );
 }
 
@@ -892,493 +547,55 @@ mod tests {
     use crate::event::AppInput;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use ratatui::buffer::Buffer;
 
-    fn test_store(name: &str) -> HighScoreStore {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static SEQ: AtomicU64 = AtomicU64::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "mvp_ui_test_{}_{}_{}",
-            std::process::id(),
-            SEQ.fetch_add(1, Ordering::Relaxed),
-            name
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        HighScoreStore::load(dir.join("highscore.json"))
-    }
-
-    fn app_at(width: u16, height: u16) -> App {
-        app_with_store(test_store("ui.json"), width, height)
-    }
-
-    fn app_with_store(store: HighScoreStore, width: u16, height: u16) -> App {
-        let mut app = App::new(store);
-        app.set_terminal_size(width, height);
+    fn test_app() -> App {
+        let path = std::env::temp_dir().join(format!("mvp_ui_test_{}.json", uuid::Uuid::new_v4()));
+        let mut app = App::new(HighScoreStore::load(path));
+        app.set_terminal_size(100, 30);
         app
     }
 
-    fn render_buffer(app: &App, width: u16, height: u16) -> Buffer {
-        let backend = TestBackend::new(width, height);
+    fn render_text(app: &App) -> String {
+        let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| render(frame, app)).unwrap();
-        terminal.backend().buffer().clone()
-    }
-
-    fn all_text(buf: &Buffer) -> String {
+        let buffer = terminal.backend().buffer();
         let mut text = String::new();
-        for y in 0..buf.area.height {
-            for x in 0..buf.area.width {
-                text.push_str(buf[(x, y)].symbol());
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                text.push_str(buffer[(x, y)].symbol());
             }
             text.push('\n');
         }
         text
     }
 
-    fn start_game_of(app: &mut App, kind: GameKind) {
-        app.handle_input(AppInput::Confirm); // Menu → GameMenu
-        while app.selected_kind() != kind {
-            app.handle_input(AppInput::Down);
-        }
-        app.handle_input(AppInput::Confirm); // start
-    }
-
     #[test]
-    fn playfield_dims_leave_room_for_chrome() {
-        assert_eq!(playfield_dims(80, 24), (78, 20));
-        assert_eq!(playfield_dims(60, 20), (58, 16));
-    }
-
-    #[test]
-    fn playfield_dims_never_go_below_one() {
-        assert_eq!(playfield_dims(1, 1), (1, 1));
-        assert_eq!(playfield_dims(0, 0), (1, 1));
-    }
-
-    #[test]
-    fn menu_render_shows_logo_and_controls() {
-        let app = app_at(100, 30);
-        let buffer = render_buffer(&app, 100, 30);
-        let text = all_text(&buffer);
-        assert!(text.contains(LOGO[0].trim()), "logo missing:\n{text}");
-        assert!(LOGO.iter().all(|line| line.is_ascii()));
-        assert_eq!(
-            LOGO.iter().map(|line| line.chars().count()).max(),
-            Some(LOGO_WIDTH)
-        );
-        let rows: Vec<_> = text.lines().collect();
-        let logo_y = rows
-            .iter()
-            .position(|row| row.contains(LOGO[0].trim()))
-            .expect("logo row");
-        let logo_x = rows[logo_y].find('_').expect("first logo cell") as u16;
-        let logo_cell = &buffer[(logo_x, logo_y as u16)];
-        assert_eq!(logo_cell.fg, Color::LightMagenta);
-        assert!(logo_cell.modifier.contains(Modifier::BOLD));
-        assert!(text.contains("MOST VALUED PROGRAMMER"));
-        assert!(text.contains("PLAY"));
-        assert!(text.contains("QUIT"));
-        assert!(text.contains("[ I ] SIGN IN"));
-    }
-
-    #[test]
-    fn leaderboard_renders_online_rank_and_offline_fallback() {
-        let mut online = app_at(100, 30);
-        let (commands, _received) = std::sync::mpsc::channel();
-        online.configure_online(commands, Some("alex".into()));
-        online.handle_input(AppInput::Leaderboard);
-        let board = serde_json::from_value(serde_json::json!({
-            "period": "daily",
-            "from": "2026-08-20",
-            "through": "2026-08-20",
-            "game_id": null,
-            "entries": [
-                {
-                    "rank": 1,
-                    "user": {
-                        "id": uuid::Uuid::new_v4(),
-                        "username": "alice",
-                        "display_name": "alice",
-                        "avatar_url": null
-                    },
-                    "points": 9420
-                },
-                {
-                    "rank": 2,
-                    "user": {
-                        "id": uuid::Uuid::new_v4(),
-                        "username": "alex",
-                        "display_name": "alex",
-                        "avatar_url": null
-                    },
-                    "points": 9180
-                }
-            ]
-        }))
-        .unwrap();
-        online.handle_online_event(crate::api::WorkerEvent::Leaderboard(Ok(board)));
-        let text = all_text(&render_buffer(&online, 100, 30));
-        assert!(text.contains("DAILY LEADERBOARD"));
-        assert!(text.contains("alice"));
-        assert!(text.contains("YOU: #2"));
-        assert!(text.contains("ONLINE"));
-
-        let mut offline = app_at(100, 30);
-        offline.handle_input(AppInput::Leaderboard);
-        let text = all_text(&render_buffer(&offline, 100, 30));
-        assert!(text.contains("Global leaderboard unavailable."));
-        assert!(text.contains("Local scores are still available."));
-    }
-
-    #[test]
-    fn menu_render_uses_doh_logo_when_the_terminal_has_room() {
-        let app = app_at(120, 40);
-        let buffer = render_buffer(&app, 120, 40);
-        let text = all_text(&buffer);
-        assert!(text.contains(DOH_LOGO[0]), "doh logo missing:\n{text}");
-        assert!(text.contains(DOH_LOGO[15]));
-        assert!(DOH_LOGO.iter().all(|line| line.is_ascii()));
-        assert_eq!(
-            DOH_LOGO.iter().map(|line| line.chars().count()).max(),
-            Some(DOH_LOGO_WIDTH)
-        );
-
-        let rows: Vec<_> = text.lines().collect();
-        let logo_left_edges: Vec<_> = DOH_LOGO
-            .iter()
-            .map(|logo_row| {
-                rows.iter()
-                    .find(|row| row.contains(logo_row))
-                    .and_then(|row| row.find(logo_row))
-                    .expect("doh logo row")
-            })
-            .collect();
-        assert!(
-            logo_left_edges.windows(2).all(|edges| edges[0] == edges[1]),
-            "doh logo rows must share a left edge: {logo_left_edges:?}"
-        );
-        let logo_y = rows
-            .iter()
-            .position(|row| row.contains(DOH_LOGO[0]))
-            .expect("doh logo row");
-        let logo_x = rows[logo_y].find('M').expect("first doh cell") as u16;
-        let logo_cell = &buffer[(logo_x, logo_y as u16)];
-        assert_eq!(logo_cell.fg, Color::LightMagenta);
-        assert!(logo_cell.modifier.contains(Modifier::BOLD));
-    }
-
-    #[test]
-    fn menu_render_degrades_to_plain_title_when_narrow() {
-        let app = app_at(100, 30);
-        // The app gates menus at 60×20, so exercise the narrow branch by
-        // drawing the menu directly into a tiny frame.
-        let backend = TestBackend::new(10, 20);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render_menu(frame, &app)).unwrap();
-        let text = all_text(terminal.backend().buffer());
-        assert!(text.contains("M V P"));
-        assert!(text.contains("PLAY"));
-    }
-
-    #[test]
-    fn menu_render_shows_the_player_name_and_mvp_of_the_day() {
-        let mut app = app_with_store(test_store("mvpline.json"), 100, 30);
-        app.open_name_prompt();
-        app.handle_input(AppInput::Text('A'));
-        app.handle_input(AppInput::Text('l'));
-        app.handle_input(AppInput::Text('e'));
-        app.handle_input(AppInput::Text('x'));
+    fn mode_menu_contains_only_the_daily_puzzle_and_ranked_duel() {
+        let mut app = test_app();
         app.handle_input(AppInput::Confirm);
-        assert_eq!(app.player_name(), "Alex");
-
-        let buffer = render_buffer(&app, 100, 30);
-        let text = all_text(&buffer);
-        assert!(text.contains("PLAYING AS Alex"), "menu must show the name");
-        let rows: Vec<_> = text.lines().collect();
-        let player_y = rows
-            .iter()
-            .position(|row| row.contains("PLAYING AS Alex"))
-            .expect("player line");
-        let name_x = rows[player_y].find("Alex").expect("player name") as u16;
-        let name_cell = &buffer[(name_x, player_y as u16)];
-        assert_eq!(name_cell.fg, Color::White);
-        assert!(name_cell.modifier.contains(Modifier::BOLD));
-        assert!(rows.last().unwrap().contains("[ I ] SIGN IN"));
-
-        app.start_game();
-        app.game_mut()
-            .as_mut()
-            .unwrap()
-            .as_stack_overflow_mut()
-            .unwrap()
-            .debug_set_block(0.0);
-        app.handle_input(AppInput::Jump); // one perfect drop: scores
-        app.game_mut()
-            .as_mut()
-            .unwrap()
-            .as_stack_overflow_mut()
-            .unwrap()
-            .debug_force_overflow();
-        app.tick(std::time::Duration::from_millis(16));
-        assert_eq!(app.state, AppState::GameOver);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("MVP OF THE DAY!"), "game over must crown");
-
-        app.back_to_menu();
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(
-            text.lines().any(|row| {
-                row.contains("MVP OF THE DAY")
-                    && row.contains("Alex")
-                    && row.contains("Stack Overflow")
-            }),
-            "today's MVP must render on one line"
-        );
+        let text = render_text(&app);
+        assert!(text.contains("Daily Code Puzzle"));
+        assert!(text.contains("Ranked 1v1"));
     }
 
     #[test]
-    fn signed_in_menu_advertises_account_action() {
-        let mut app = app_at(100, 30);
-        let (commands, _received) = std::sync::mpsc::channel();
-        app.configure_online(commands, Some("alex".into()));
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("[ I ] ACCOUNT"));
-        assert!(!text.contains("[ I ] SIGN IN"));
+    fn daily_code_mode_renders_the_broken_line_and_input() {
+        let mut app = test_app();
+        app.start_game_of(GameKind::DailyCode);
+        let text = render_text(&app);
+        assert!(text.contains("DAILY CODE PUZZLE"));
+        assert!(text.contains("BUG ▸"));
+        assert!(text.contains("FIX ▸"));
+        assert!(text.contains("TYPE FIX"));
     }
 
     #[test]
-    fn name_prompt_render_shows_the_input_line() {
-        let mut app = app_at(100, 30);
-        app.open_name_prompt();
-        app.handle_input(AppInput::Text('A'));
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("WHO IS THE MVP?"));
-        assert!(text.contains("A▌"), "typed name must render with cursor");
-        assert!(text.contains("NAME REQUIRED TO PLAY"));
-        assert!(!text.contains("SKIP"));
-    }
-
-    fn type_word(app: &mut App, word: &str) {
-        for c in word.chars() {
-            app.handle_input(AppInput::Text(c));
-        }
-        app.handle_input(AppInput::Confirm);
-        app.tick(std::time::Duration::from_millis(16));
-    }
-
-    #[test]
-    fn stack_overflow_render_shows_hud_tower_and_block() {
-        let mut app = app_at(100, 30);
-        app.start_game();
-        let buf = render_buffer(&app, 100, 30);
-        let text = all_text(&buf);
-        assert!(text.contains("STACK OVERFLOW"));
-        assert!(text.contains("SCORE"));
-        assert!(text.contains("HEIGHT"));
-        assert!(text.contains("BEST"));
-        assert!(text.contains("SPACE drop"));
-        // The base layer is centered on the playfield's ground row. Body
-        // rows run 2..28 of a 30-row terminal, so the ground line sits at
-        // row 27 and the base layer at 26.
-        let cols = playfield_dims(100, 30).0 as i32;
-        let left = (cols - crate::game::stack_overflow::START_WIDTH) / 2;
-        let ground = 27;
-        assert_eq!(buf[(left as u16, ground)].symbol(), "─", "ground line");
-        for x in left..left + crate::game::stack_overflow::START_WIDTH {
-            assert_eq!(
-                buf[(x as u16, 26)].symbol(),
-                "█",
-                "tower base at column {x}"
-            );
-        }
-    }
-
-    #[test]
-    fn stack_overflow_render_shows_the_sliding_block_and_arrow() {
-        let mut app = app_at(100, 30);
-        app.start_game();
-        app.game_mut()
-            .as_mut()
-            .unwrap()
-            .as_stack_overflow_mut()
-            .unwrap()
-            .debug_set_block(3.0);
-        let buf = render_buffer(&app, 100, 30);
-        let text = all_text(&buf);
-        assert!(text.contains(">") || text.contains("<"), "direction arrow");
-        // The block sits two rows above the ground (one spare row).
-        let cols = playfield_dims(100, 30).0 as i32;
-        let left = (cols - crate::game::stack_overflow::START_WIDTH) / 2;
-        assert_eq!(buf[(left as u16 + 3, 25)].symbol(), "█");
-    }
-
-    #[test]
-    fn daily_pr_render_shows_the_board_and_input() {
-        let mut app = app_at(100, 30);
-        start_game_of(&mut app, GameKind::DailyPr);
-        let word = app.game().unwrap().as_daily_pr().unwrap().word();
-        for c in word.chars() {
-            app.handle_input(AppInput::Text(c));
-        }
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("THE DAILY PR"));
-        assert!(text.contains("COMMIT #"));
-        assert!(text.contains("GUESS 0/6"));
-        assert!(text.contains("TYPE GUESS"));
-        assert!(text.contains(&format!("{}▌", word)), "typed word renders");
-        let rows: Vec<_> = text.lines().collect();
-        let input_y = rows
-            .iter()
-            .position(|row| row.contains(&format!("{}▌", word)))
-            .expect("Daily PR input row");
-        let input_x = rows[input_y].find(&format!("{}▌", word)).unwrap();
-        assert!(input_x > 10, "board starts at x={input_x}");
-        assert!(input_y > 5, "board starts at y={input_y}:\n{text}");
-
-        type_word(&mut app, &word); // submit: solved
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("G"), "correct letters are marked");
-    }
-
-    #[test]
-    fn daily_pr_fail_render_reveals_the_word() {
-        let mut app = app_at(100, 30);
-        start_game_of(&mut app, GameKind::DailyPr);
-        let word = app.game().unwrap().as_daily_pr().unwrap().word();
-        let filler = crate::game::daily_pr::GUESSES
-            .iter()
-            .find(|w| **w != word)
-            .unwrap();
-        for _ in 0..crate::game::daily_pr::MAX_GUESSES {
-            type_word(&mut app, filler);
-        }
-        assert_eq!(app.state, AppState::GameOver);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(
-            text.contains(&format!("THE WORD WAS {}", word)),
-            "the failed PR reveals its word:\n{text}"
-        );
-    }
-
-    #[test]
-    fn daily_fix_render_shows_snippet_hint_and_input() {
-        let mut app = app_at(100, 30);
-        start_game_of(&mut app, GameKind::DailyFix);
-        let bug = app.game().unwrap().as_daily_fix().unwrap().bug();
-        let fix = bug.fix;
-        // Two wrong attempts reveal the hint.
-        for _ in 0..2 {
-            for c in "definitely wrong".chars() {
-                app.handle_input(AppInput::Text(c));
-            }
-            app.handle_input(AppInput::Confirm);
-            app.tick(std::time::Duration::from_millis(16));
-        }
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("THE DAILY FIX"));
-        assert!(text.contains("TIME "));
-        assert!(text.contains("ATTEMPTS 2"));
-        assert!(text.contains("BUG ▸"), "broken line is marked:\n{text}");
-        assert!(text.contains(bug.hint), "hint appears after two misses");
-        assert!(text.contains("fix ▸"));
-        let rows: Vec<_> = text.lines().collect();
-        let code_y = rows
-            .iter()
-            .position(|row| row.contains("BUG ▸"))
-            .expect("buggy code line");
-        let code_x = rows[code_y].find("BUG ▸").unwrap();
-        assert!(code_x > 10, "code must not hug the left edge");
-        assert!(code_y > 5, "code must not hug the top edge");
-
-        for c in fix.chars() {
-            app.handle_input(AppInput::Text(c));
-        }
-        app.handle_input(AppInput::Confirm);
-        app.tick(std::time::Duration::from_millis(16));
-        assert_eq!(app.state, AppState::GameOver);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(
-            text.contains("FIXED IN"),
-            "game over shows the time:\n{text}"
-        );
-        let prefix: String = bug.explainer.chars().take(20).collect();
-        assert!(
-            text.contains(&prefix),
-            "explainer shows the lesson (prefix of {prefix:?}):\n{text}"
-        );
-    }
-
-    #[test]
-    fn paused_render_shows_overlay() {
-        let mut app = app_at(100, 30);
-        app.start_game();
-        app.pause();
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("PAUSED"));
-    }
-
-    #[test]
-    fn game_over_render_shows_panel() {
-        let mut app = app_at(100, 30);
-        app.start_game();
-        app.game_mut()
-            .as_mut()
-            .unwrap()
-            .as_stack_overflow_mut()
-            .unwrap()
-            .debug_force_overflow();
-        app.tick(std::time::Duration::from_millis(16));
-        assert_eq!(app.state, AppState::GameOver);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("GAME OVER"));
-        assert!(text.contains("PLAY AGAIN"));
-        assert!(text.contains("MENU"));
-    }
-
-    #[test]
-    fn too_small_render_shows_warning() {
-        let mut app = app_at(42, 14);
-        app.start_game();
-        let text = all_text(&render_buffer(&app, 42, 14));
-        assert!(text.contains("TERMINAL TOO SMALL"));
-        assert!(text.contains("42×14"));
-    }
-
-    // ---- game menu ----------------------------------------------------------
-
-    #[test]
-    fn game_menu_render_lists_all_three_games() {
-        let mut app = app_at(100, 30);
-        app.handle_input(AppInput::Confirm);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("CHOOSE YOUR GAME"));
-        assert!(text.contains("Stack Overflow"));
-        assert!(text.contains("don't overflow"));
-        assert!(text.contains("The Daily PR"));
-        assert!(text.contains("fewest guesses wins"));
-        assert!(text.contains("The Daily Fix"));
-        assert!(text.contains("fix it fastest"));
-        assert!(text.contains("ENTER PLAY"));
-        assert!(text.contains("ESC BACK"));
-    }
-
-    #[test]
-    fn game_menu_marker_follows_the_selection() {
-        let mut app = app_at(100, 30);
-        app.handle_input(AppInput::Confirm);
-        app.handle_input(AppInput::Down);
-        assert_eq!(app.selected_kind(), GameKind::DailyPr);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("▶ The Daily PR"));
-        assert!(!text.contains("▶ Stack Overflow"));
-    }
-
-    #[test]
-    fn best_lines_speak_the_games_own_units() {
-        assert_eq!(best_line(GameKind::StackOverflow, 4_820), "BEST 4,820");
-        assert_eq!(best_line(GameKind::DailyPr, 6_000_000), "BEST 1 GUESSES");
-        assert_eq!(best_line(GameKind::DailyPr, 0), "BEST 0");
-        assert_eq!(best_line(GameKind::DailyFix, 999_984_000), "BEST 0:16");
+    fn ranked_mode_renders_matchmaking_and_company_neutral_match_points() {
+        let mut app = test_app();
+        app.start_game_of(GameKind::RankedMatch);
+        let text = render_text(&app);
+        assert!(text.contains("RANKED 1v1"));
+        assert!(text.contains("Sign in to find an opponent"));
     }
 }

@@ -28,22 +28,24 @@ describe("leaderboard API", () => {
     vi.stubGlobal("fetch", fetchMock);
     vi.stubEnv("MVP_API_URL", "https://api.example.test/");
 
-    await expect(fetchLeaderboard("weekly", "overall")).resolves.toEqual(responseBody);
+    await expect(fetchLeaderboard("weekly", "overall")).resolves.toEqual(
+      responseBody,
+    );
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.example.test/v1/leaderboards/weekly",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
 
-    await fetchLeaderboard("daily", "daily_fix");
+    await fetchLeaderboard("daily", "daily_code");
     expect(fetchMock).toHaveBeenLastCalledWith(
-      "https://api.example.test/v1/leaderboards/games/daily_fix?period=daily",
+      "https://api.example.test/v1/leaderboards/games/daily_code?period=daily",
       expect.any(Object),
     );
   });
 
   it("normalizes bad URL state and API failures", async () => {
     expect(parsePeriod("never")).toBe("daily");
-    expect(parseGame(["daily_pr"])).toBe("daily_pr");
+    expect(parseGame(["daily_code"])).toBe("daily_code");
 
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("timeout")));
     await expect(fetchLeaderboard("daily", "overall")).rejects.toBeInstanceOf(

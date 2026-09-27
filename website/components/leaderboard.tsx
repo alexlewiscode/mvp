@@ -2,11 +2,7 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { PeriodSelect } from "@/components/period-select";
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Table,
   TableBody,
@@ -31,9 +27,7 @@ const periodLabels: Record<Period, string> = {
 
 const gameLabels: Record<GameFilter, string> = {
   overall: "Overall",
-  stack_overflow: "Stack Overflow",
-  daily_pr: "Daily PR",
-  daily_fix: "Daily Fix",
+  daily_code: "Daily Code Puzzle",
 };
 
 function formatDate(value: string): string {
@@ -116,7 +110,8 @@ export function LeaderboardView({
   game: GameFilter;
   unavailable?: boolean;
 }) {
-  const title = game === "overall" ? `${periodLabels[period]} MVP` : gameLabels[game];
+  const title =
+    game === "overall" ? `${periodLabels[period]} MVP` : gameLabels[game];
 
   return (
     <main id="main-content">
@@ -138,21 +133,33 @@ export function LeaderboardView({
         </header>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <nav aria-label="Leaderboard game" className="flex flex-wrap gap-1">
-            {GAME_IDS.map((item) => {
-              const targetPeriod =
-                period === "weekly" && item !== "overall" ? "all-time" : period;
-              return (
-                <FilterLink
-                  key={item}
-                  href={leaderboardHref(targetPeriod, item)}
-                  active={game === item}
-                >
-                  {gameLabels[item]}
-                </FilterLink>
-              );
-            })}
-          </nav>
+          <div className="flex flex-wrap items-center gap-3">
+            <nav aria-label="Leaderboard type" className="flex flex-wrap gap-1">
+              <FilterLink href="/leaderboard" active={true}>
+                Players
+              </FilterLink>
+              <FilterLink href="/leaderboard/companies" active={false}>
+                Companies
+              </FilterLink>
+            </nav>
+            <nav aria-label="Leaderboard game" className="flex flex-wrap gap-1">
+              {GAME_IDS.map((item) => {
+                const targetPeriod =
+                  period === "weekly" && item !== "overall"
+                    ? "all-time"
+                    : period;
+                return (
+                  <FilterLink
+                    key={item}
+                    href={leaderboardHref(targetPeriod, item)}
+                    active={game === item}
+                  >
+                    {gameLabels[item]}
+                  </FilterLink>
+                );
+              })}
+            </nav>
+          </div>
           <PeriodSelect period={period} game={game} />
         </div>
 
@@ -179,7 +186,9 @@ export function LeaderboardView({
                     Rank
                   </TableHead>
                   <TableHead>Programmer</TableHead>
-                  <TableHead className="text-right">MVP</TableHead>
+                  <TableHead className="text-right">
+                    {game === "overall" ? "Match points" : "Puzzle score"}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

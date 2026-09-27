@@ -42,7 +42,9 @@ function Section({
 
   return (
     <section className="flex flex-col gap-3" aria-labelledby={id}>
-      <p className="text-xs tracking-widest text-primary uppercase">{eyebrow}</p>
+      <p className="text-xs tracking-widest text-primary uppercase">
+        {eyebrow}
+      </p>
       <h2 id={id} className="text-2xl font-medium text-foreground sm:text-3xl">
         {title}
       </h2>
@@ -77,12 +79,15 @@ export default function AboutPage() {
           </div>
         </header>
 
-        <Section eyebrow="The point" title="No AI doing the thinking. Just you.">
+        <Section
+          eyebrow="The point"
+          title="No AI doing the thinking. Just you."
+        >
           <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground sm:text-base">
-            AI is part of how developers work now. But your judgment, creativity,
-            and problem-solving are still yours. MVP gives you a place to use
-            them—no generated answers, no autopilot, just your own skills in the
-            moment.
+            AI is part of how developers work now. But your judgment,
+            creativity, and problem-solving are still yours. MVP gives you a
+            place to use them—no generated answers, no autopilot, just your own
+            skills in the moment.
           </p>
         </Section>
 
@@ -102,19 +107,33 @@ export default function AboutPage() {
           </ol>
         </Section>
 
-        <Section eyebrow="The competition" title="Most Valued Programmer isn’t given. It’s earned.">
+        <Section
+          eyebrow="The competition"
+          title="Most Valued Programmer isn’t given. It’s earned."
+        >
           <div className="flex max-w-2xl flex-col gap-4 text-sm leading-relaxed text-muted-foreground sm:text-base">
             <p>
-              Compare your results on shared leaderboards and compete for the
-              daily top spot. No need to leave your terminal to find out where
-              you stand.
+              Take on the daily code puzzle, then queue for a live 1v1 against a
+              similarly skilled developer. First correct fix wins 100 public
+              match points; your private ELO quietly finds fair opponents.
             </p>
             <p>
-              And that&apos;s just the start. The bigger vision is to bring
-              developers into direct head-to-head competition—skill against
-              skill, no AI in the driver&apos;s seat.
+              The no-AI rule is an honor system: bring your own brain, solve the
+              challenge yourself, and let your result speak for you.
             </p>
           </div>
+        </Section>
+
+        <Section
+          eyebrow="Compete as a team"
+          title="The strongest team isn’t just the biggest."
+        >
+          <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground sm:text-base">
+            Verify your company email from your profile and represent your team.
+            Company standings use average match points per active verified
+            member over the last 30 days, and teams need at least three active
+            players to rank.
+          </p>
         </Section>
 
         <section

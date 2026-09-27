@@ -43,7 +43,7 @@ Point the CLI at it with `MVP_API_URL=http://localhost:3000`. Backend quality co
 
 New installations use the platform config directory selected for the application name `MVP`. It contains:
 
-- `highscore.json` for player name, per-game scores, and Daily PR progress
+- `highscore.json` for player name and personal daily-puzzle records
 - `mvp_day.json` for the current daily MVP record
 - `pending_runs/<user-id>.json` for bounded authenticated submissions awaiting retry
 

@@ -4,6 +4,7 @@
 mod auth;
 mod client;
 mod leaderboard;
+pub mod matches;
 mod queue;
 mod runs;
 
@@ -13,6 +14,7 @@ pub use auth::{
 };
 pub use client::{ApiClient, ApiError, ClientVersion};
 pub use leaderboard::{Leaderboard, LeaderboardRequest};
+pub use matches::{DailyCodeAttempt, MatchSubmission, RankedMatchState};
 pub use queue::{PendingRunQueue, QueueProcessResult};
 pub use runs::{GameId, RunPayload};
 
@@ -26,6 +28,14 @@ use std::thread;
 pub enum WorkerCommand {
     Submit(RunPayload),
     Leaderboard(LeaderboardRequest),
+    ClaimDailyCodeAttempt,
+    JoinRankedQueue,
+    LeaveRankedQueue,
+    SubmitRankedAnswer {
+        match_id: String,
+        answer: String,
+        attempts: u32,
+    },
     RetryPending,
     Shutdown,
 }
@@ -35,6 +45,9 @@ pub enum WorkerEvent {
     RunQueued(uuid::Uuid),
     QueueProcessed(QueueProcessResult),
     Leaderboard(Result<Leaderboard, ApiError>),
+    DailyCodeAttempt(Result<DailyCodeAttempt, ApiError>),
+    RankedMatch(Result<RankedMatchState, ApiError>),
+    RankedSubmission(Result<MatchSubmission, ApiError>),
     Error(String),
     Stopped,
 }
@@ -132,10 +145,22 @@ fn worker_main(
     };
     let _ = ready.send(Ok(()));
 
+    let mut ranked_match_polling = false;
     loop {
-        let command = match commands.recv_timeout(std::time::Duration::from_secs(30)) {
+        let poll_interval = if ranked_match_polling { 2 } else { 30 };
+        let command = match commands.recv_timeout(std::time::Duration::from_secs(poll_interval)) {
             Ok(command) => command,
             Err(mpsc::RecvTimeoutError::Timeout) => {
+                if ranked_match_polling && let Some(session) = &session {
+                    let result = runtime.block_on(client.current_ranked_match(session));
+                    if matches!(
+                        &result,
+                        Ok(state) if matches!(state.status.as_str(), "completed" | "expired" | "idle")
+                    ) {
+                        ranked_match_polling = false;
+                    }
+                    let _ = events.send(WorkerEvent::RankedMatch(result));
+                }
                 if let Some(session) = &session
                     && let Ok(result) = runtime.block_on(queue.process_due(&client, session))
                     && (result.submitted > 0 || result.retried > 0 || result.dropped > 0)
@@ -176,6 +201,52 @@ fn worker_main(
             WorkerCommand::Leaderboard(request) => {
                 let result = runtime.block_on(client.leaderboard(request));
                 let _ = events.send(WorkerEvent::Leaderboard(result));
+            }
+            WorkerCommand::ClaimDailyCodeAttempt => {
+                let result = session
+                    .as_ref()
+                    .ok_or(ApiError::Unauthorized)
+                    .and_then(|session| runtime.block_on(client.claim_daily_code_attempt(session)));
+                let _ = events.send(WorkerEvent::DailyCodeAttempt(result));
+            }
+            WorkerCommand::JoinRankedQueue => {
+                let Some(session) = &session else {
+                    let _ = events.send(WorkerEvent::Error(
+                        "sign in to join a ranked match".to_string(),
+                    ));
+                    continue;
+                };
+                ranked_match_polling = true;
+                let result = runtime.block_on(client.join_ranked_queue(session));
+                if matches!(&result, Ok(state) if matches!(state.status.as_str(), "completed" | "expired" | "idle"))
+                {
+                    ranked_match_polling = false;
+                }
+                let _ = events.send(WorkerEvent::RankedMatch(result));
+            }
+            WorkerCommand::LeaveRankedQueue => {
+                ranked_match_polling = false;
+                if let Some(session) = &session {
+                    let _ = runtime.block_on(client.leave_ranked_queue(session));
+                }
+            }
+            WorkerCommand::SubmitRankedAnswer {
+                match_id,
+                answer,
+                attempts,
+            } => {
+                let result = session
+                    .as_ref()
+                    .ok_or(ApiError::Unauthorized)
+                    .and_then(|session| {
+                        runtime.block_on(
+                            client.submit_ranked_answer(session, &match_id, &answer, attempts),
+                        )
+                    });
+                if matches!(&result, Ok(submission) if submission.result.is_some()) {
+                    ranked_match_polling = true;
+                }
+                let _ = events.send(WorkerEvent::RankedSubmission(result));
             }
             WorkerCommand::RetryPending => {
                 let Some(session) = &session else {
@@ -220,16 +291,24 @@ mod tests {
         }))
         .unwrap();
         let worker = ApiWorker::spawn(client, Some(session), path.clone()).unwrap();
+        let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let mut result = serde_json::Map::new();
+        result.insert("solved".into(), serde_json::Value::Bool(true));
+        result.insert("attempts".into(), serde_json::Value::from(0));
+        result.insert("hint_used".into(), serde_json::Value::Bool(false));
+        result.insert("answer".into(), serde_json::Value::String("fixed".into()));
         worker
             .commands()
             .send(WorkerCommand::Submit(
                 RunPayload::new(
-                    GameId::StackOverflow,
-                    50,
-                    1,
-                    "test",
-                    serde_json::Map::new(),
-                    None,
+                    35_000,
+                    35_000,
+                    result,
+                    runs::Challenge {
+                        date: date.clone(),
+                        version: 1,
+                        id: format!("daily_code:v1:{date}"),
+                    },
                 )
                 .unwrap(),
             ))

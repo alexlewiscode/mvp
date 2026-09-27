@@ -8,8 +8,6 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 pub enum AppInput {
     /// ENTER — confirm selection / submit.
     Confirm,
-    /// SPACE — drop the block (Stack Overflow).
-    Jump,
     /// ↑ — navigate menus; drops the block while playing.
     Up,
     /// ↓ — navigate menus.
@@ -26,6 +24,8 @@ pub enum AppInput {
     Leaderboard,
     /// I — open sign-in/account handling from the menu.
     Account,
+    /// M — start ranked 1v1 from the main menu.
+    RankedMatch,
     /// A printable character typed into the name prompt or a game.
     Text(char),
     /// Backspace in the name prompt or a game.
@@ -78,7 +78,6 @@ fn key_to_input(key: event::KeyEvent, text_mode: bool) -> Option<AppInput> {
     let press = key.kind == KeyEventKind::Press;
     match key.code {
         KeyCode::Enter => Some(AppInput::Confirm),
-        KeyCode::Char(' ') => Some(AppInput::Jump),
         KeyCode::Up => press.then_some(AppInput::Up),
         KeyCode::Down => press.then_some(AppInput::Down),
         KeyCode::Char('p') | KeyCode::Char('P') => press.then_some(AppInput::TogglePause),
@@ -86,6 +85,7 @@ fn key_to_input(key: event::KeyEvent, text_mode: bool) -> Option<AppInput> {
         KeyCode::Char('n') | KeyCode::Char('N') => press.then_some(AppInput::Rename),
         KeyCode::Char('l') | KeyCode::Char('L') => press.then_some(AppInput::Leaderboard),
         KeyCode::Char('i') | KeyCode::Char('I') => press.then_some(AppInput::Account),
+        KeyCode::Char('m') | KeyCode::Char('M') => press.then_some(AppInput::RankedMatch),
         KeyCode::Esc => press.then_some(AppInput::Back),
         KeyCode::Char('q') | KeyCode::Char('Q') => press.then_some(AppInput::Quit),
         _ => None,
@@ -115,14 +115,6 @@ mod tests {
         assert_eq!(
             key_to_input(key(KeyCode::Enter, KeyModifiers::NONE), false),
             Some(AppInput::Confirm)
-        );
-    }
-
-    #[test]
-    fn space_is_jump() {
-        assert_eq!(
-            key_to_input(key(KeyCode::Char(' '), KeyModifiers::NONE), false),
-            Some(AppInput::Jump)
         );
     }
 
@@ -187,6 +179,18 @@ mod tests {
             Some(AppInput::Account)
         );
         assert_eq!(key_to_input(release(KeyCode::Char('i')), false), None);
+    }
+
+    #[test]
+    fn m_opens_ranked_matchmaking() {
+        assert_eq!(
+            key_to_input(key(KeyCode::Char('m'), KeyModifiers::NONE), false),
+            Some(AppInput::RankedMatch)
+        );
+        assert_eq!(
+            key_to_input(key(KeyCode::Char('M'), KeyModifiers::NONE), false),
+            Some(AppInput::RankedMatch)
+        );
     }
 
     #[test]

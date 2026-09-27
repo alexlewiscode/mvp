@@ -39,16 +39,22 @@ const board: Leaderboard = {
 };
 
 describe("leaderboard", () => {
-  it("renders API rankings in a table with avatars and MVP points", () => {
+  it("renders API rankings in a table with avatars and match points", () => {
     render(<LeaderboardView board={board} period="daily" game="overall" />);
 
-    expect(screen.getByRole("heading", { name: "Daily MVP" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Daily MVP" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("table")).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Rank" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "Rank" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("columnheader", { name: "Programmer" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "MVP" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "Match points" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Alice")).toBeInTheDocument();
     expect(screen.getByText("@alice")).toBeInTheDocument();
     expect(screen.getAllByText("AL")).toHaveLength(2);
@@ -66,10 +72,17 @@ describe("leaderboard", () => {
         game="overall"
       />,
     );
-    expect(screen.getByRole("heading", { name: "No scores yet" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "No scores yet" }),
+    ).toBeInTheDocument();
 
     rerender(
-      <LeaderboardView board={null} period="daily" game="overall" unavailable />,
+      <LeaderboardView
+        board={null}
+        period="daily"
+        game="overall"
+        unavailable
+      />,
     );
     expect(
       screen.getByRole("heading", { name: "Leaderboard unavailable" }),
@@ -85,8 +98,12 @@ describe("leaderboard", () => {
     });
     expect(trigger).toHaveTextContent("Daily");
     expect(
-      screen.getByRole("link", { name: "Stack Overflow" }),
-    ).toHaveAttribute("href", "/leaderboard?period=daily&game=stack_overflow");
+      screen.getByRole("link", { name: "Daily Code Puzzle" }),
+    ).toHaveAttribute("href", "/leaderboard?period=daily&game=daily_code");
+    expect(screen.getByRole("link", { name: "Companies" })).toHaveAttribute(
+      "href",
+      "/leaderboard/companies",
+    );
 
     fireEvent.click(trigger);
     const option = await screen.findByRole("option", { name: "Weekly" });

@@ -46,9 +46,7 @@ pub enum LeaderboardKind {
     Daily,
     Weekly,
     AllTime,
-    StackOverflow,
-    DailyPr,
-    DailyFix,
+    DailyCode,
 }
 
 #[cfg(test)]

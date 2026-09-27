@@ -236,14 +236,11 @@ async fn run_profile() -> Result<(), Box<dyn Error>> {
         format_rank(profile.stats.global_rank)
     );
     println!(
-        "Best Stack       {}",
-        format_number(profile.stats.best_stack.max(0) as u64)
+        "Match points     {}",
+        format_number(u64::from(profile.stats.match_points))
     );
-    println!("Daily PR streak  {}", profile.stats.daily_pr_streak);
-    println!(
-        "Daily Fix        {}/7 this week",
-        profile.stats.daily_fix_this_week
-    );
+    println!("Ranked wins      {}", profile.stats.ranked_wins);
+    println!("Ranked losses    {}", profile.stats.ranked_losses);
     Ok(())
 }
 
@@ -266,16 +263,8 @@ fn leaderboard_request(board: LeaderboardKind, limit: u8) -> LeaderboardRequest 
         LeaderboardKind::Daily => LeaderboardRequest::Daily { date: None, limit },
         LeaderboardKind::Weekly => LeaderboardRequest::Weekly { limit },
         LeaderboardKind::AllTime => LeaderboardRequest::AllTime { limit },
-        LeaderboardKind::StackOverflow => LeaderboardRequest::Game {
-            game: GameId::StackOverflow,
-            limit,
-        },
-        LeaderboardKind::DailyPr => LeaderboardRequest::Game {
-            game: GameId::DailyPr,
-            limit,
-        },
-        LeaderboardKind::DailyFix => LeaderboardRequest::Game {
-            game: GameId::DailyFix,
+        LeaderboardKind::DailyCode => LeaderboardRequest::Game {
+            game: GameId::DailyCode,
             limit,
         },
     }
@@ -286,9 +275,7 @@ fn print_leaderboard(board: LeaderboardKind, leaderboard: &Leaderboard, username
         LeaderboardKind::Daily => "Daily",
         LeaderboardKind::Weekly => "Weekly",
         LeaderboardKind::AllTime => "All-Time",
-        LeaderboardKind::StackOverflow => "Stack Overflow",
-        LeaderboardKind::DailyPr => "The Daily PR",
-        LeaderboardKind::DailyFix => "The Daily Fix",
+        LeaderboardKind::DailyCode => "Daily Code Puzzle",
     };
     println!("MVP - {title} Leaderboard");
     println!();

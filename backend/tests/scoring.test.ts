@@ -1,109 +1,73 @@
 import { describe, expect, it } from "vitest";
 import { normalizeRun, validateChallenge } from "../src/scoring.js";
 
-describe("normalization version 1", () => {
-  it("caps Stack Overflow at 10,000", () => {
+describe("daily code puzzle scoring", () => {
+  it("awards higher scores for faster correct solves", () => {
     expect(
       normalizeRun({
-        gameId: "stack_overflow",
-        rawScore: 12_350,
-        durationMs: 1,
-      }),
-    ).toBe(10_000);
-  });
-
-  it("scores Daily PR guesses and whole speed seconds", () => {
-    expect(
-      normalizeRun({
-        gameId: "daily_pr",
-        rawScore: 1,
-        durationMs: 0,
+        gameId: "daily_code",
+        rawScore: 20_000,
+        durationMs: 20_000,
         solved: true,
+        attempts: 0,
+        hintUsed: false,
       }),
-    ).toBe(6_600);
+    ).toBe(3_580_000);
     expect(
       normalizeRun({
-        gameId: "daily_pr",
-        rawScore: 6,
-        durationMs: 599_999,
-        solved: true,
-      }),
-    ).toBe(1_000);
-    expect(
-      normalizeRun({
-        gameId: "daily_pr",
-        rawScore: 6,
-        durationMs: 0,
-        solved: false,
-      }),
-    ).toBe(0);
-  });
-
-  it("scores Daily Fix from charged duration", () => {
-    expect(
-      normalizeRun({
-        gameId: "daily_fix",
+        gameId: "daily_code",
         rawScore: 60_000,
-        durationMs: 60_000,
+        durationMs: 35_000,
         solved: true,
-        attempts: 0,
-        hintUsed: false,
+        attempts: 2,
+        hintUsed: true,
       }),
-    ).toBe(4_000);
-    expect(
-      normalizeRun({
-        gameId: "daily_fix",
-        rawScore: 300_000,
-        durationMs: 300_000,
-        solved: true,
-        attempts: 0,
-        hintUsed: false,
-      }),
-    ).toBe(0);
+    ).toBe(3_540_000);
+  });
+
+  it("checks charged duration, hint use, and completion consistency", () => {
     expect(() =>
       normalizeRun({
-        gameId: "daily_fix",
-        rawScore: 1,
-        durationMs: 1,
-        solved: false,
-        attempts: 0,
+        gameId: "daily_code",
+        rawScore: 5_000,
+        durationMs: 1_000,
+        solved: true,
+        attempts: 1,
         hintUsed: false,
       }),
-    ).toThrow("completed results");
+    ).toThrow("raw_score must include attempt penalties");
+    expect(() =>
+      normalizeRun({
+        gameId: "daily_code",
+        rawScore: 30_000,
+        durationMs: 10_000,
+        solved: true,
+        attempts: 2,
+        hintUsed: false,
+      }),
+    ).toThrow("hint usage");
   });
 });
 
-describe("daily challenge identity", () => {
+describe("daily code puzzle identity", () => {
   const now = new Date("2026-08-20T23:59:00.000Z");
 
-  it("accepts the current UTC deterministic identity", () => {
+  it("accepts only the current UTC identity", () => {
     expect(
       validateChallenge(
-        "daily_pr",
-        { date: "2026-08-20", version: 1, id: "daily_pr:v1:2026-08-20" },
+        { date: "2026-08-20", version: 1, id: "daily_code:v1:2026-08-20" },
         now,
       ),
     ).toEqual({
       date: "2026-08-20",
       version: 1,
-      id: "daily_pr:v1:2026-08-20",
+      id: "daily_code:v1:2026-08-20",
     });
-  });
-
-  it("rejects stale dates and mismatched IDs", () => {
     expect(() =>
       validateChallenge(
-        "daily_fix",
-        { date: "2026-08-19", version: 1, id: "daily_fix:v1:2026-08-19" },
+        { date: "2026-08-19", version: 1, id: "daily_code:v1:2026-08-19" },
         now,
       ),
     ).toThrow("current UTC date");
-    expect(() =>
-      validateChallenge(
-        "daily_fix",
-        { date: "2026-08-20", version: 1, id: "daily_pr:v1:2026-08-20" },
-        now,
-      ),
-    ).toThrow("challenge.id");
   });
 });

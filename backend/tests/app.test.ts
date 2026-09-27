@@ -63,6 +63,59 @@ describe("HTTP boundaries", () => {
     expect(response.json()).toMatchObject({ error: { code: "invalid_date" } });
   });
 
+  it("serves the daily puzzle without exposing its answer", async () => {
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce({ rows: [{ count: 5 }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            puzzle_id: "daily-code-v1-01",
+            title: "Off-by-one loop",
+            language: "rust",
+            snippet: ["for i in 0..=n {"],
+            buggy_line: 0,
+            answer: "for i in 0..n {",
+            explanation: "Use an exclusive range.",
+            difficulty: 1,
+          },
+        ],
+      });
+    app = await buildApp({
+      config,
+      db: { query } as unknown as Database,
+      now: () => new Date("2026-08-20T12:00:00.000Z"),
+    });
+    const response = await app.inject({ url: "/v1/puzzles/daily" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      id: "daily-code-v1-01",
+      date: "2026-08-20",
+      buggy_line: 0,
+    });
+    expect(response.json()).not.toHaveProperty("answer");
+  });
+
+  it("requires authentication for ranked queue and company verification", async () => {
+    app = await buildApp({ config, db });
+    const match = await app.inject({
+      method: "POST",
+      url: "/v1/matches/queue",
+    });
+    const puzzleAttempt = await app.inject({
+      method: "POST",
+      url: "/v1/puzzles/daily/attempt",
+    });
+    const company = await app.inject({
+      method: "POST",
+      url: "/v1/company/verification/start",
+      payload: { company_name: "Acme", email: "dev@acme.example" },
+    });
+    expect(match.statusCode).toBe(401);
+    expect(puzzleAttempt.statusCode).toBe(401);
+    expect(company.statusCode).toBe(401);
+  });
+
   it("returns 503 when email authentication is not configured", async () => {
     app = await buildApp({ config, db });
     const response = await app.inject({
