@@ -11,8 +11,8 @@ describe("readConfig", () => {
       emailAuthEnabled: false,
       sessionTtlDays: 30,
       trustProxy: false,
-      minimumClientVersion: "0.1.0",
-      latestClientVersion: "0.1.0",
+      minimumClientVersion: "0.2.0",
+      latestClientVersion: "0.2.0",
     });
   });
 

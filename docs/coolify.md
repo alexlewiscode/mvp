@@ -36,8 +36,8 @@ EMAIL_AUTH_ENABLED=true
 CLOUDFLARE_ACCOUNT_ID=<account-id>
 CLOUDFLARE_EMAIL_API_TOKEN=<email-service-token>
 EMAIL_FROM=login@mostvaluedprogrammer.com
-MINIMUM_CLIENT_VERSION=0.1.0
-LATEST_CLIENT_VERSION=0.1.0
+MINIMUM_CLIENT_VERSION=0.2.0
+LATEST_CLIENT_VERSION=0.2.0
 ```
 
 The Cloudflare email sender must be verified and the API token must have permission to send mail from `EMAIL_FROM`. The backend refuses to start with email enabled and incomplete settings.
