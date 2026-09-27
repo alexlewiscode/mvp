@@ -62,7 +62,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (emailAuthEnabledValue !== "true" && emailAuthEnabledValue !== "false")
     throw new Error("EMAIL_AUTH_ENABLED must be true or false");
   const emailAuthEnabled = emailAuthEnabledValue === "true";
-  const minimumClientVersion = optional(env.MINIMUM_CLIENT_VERSION) ?? "0.1.0";
+  const minimumClientVersion = optional(env.MINIMUM_CLIENT_VERSION) ?? "0.2.0";
   const latestClientVersion =
     optional(env.LATEST_CLIENT_VERSION) ?? minimumClientVersion;
   const semver = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;

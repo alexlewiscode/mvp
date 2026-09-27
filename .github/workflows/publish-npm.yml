@@ -114,6 +114,4 @@ jobs:
       - run: chmod +x npm/bin/mvp.js npm/bin/mvp-darwin-* npm/bin/mvp-linux-*
       - run: npm install --global npm@latest
       - run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         working-directory: npm
