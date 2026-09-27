@@ -47,7 +47,7 @@ interface PuzzleRow {
 interface MatchRow {
   id: string;
   status: "waiting" | "active" | "completed" | "expired";
-  puzzle_date: string;
+  puzzle_date: string | Date;
   puzzle_id: string;
   player_one_id: string;
   player_two_id: string | null;
@@ -62,7 +62,8 @@ interface MatchRow {
 
 const sha256 = (value: string) =>
   createHash("sha256").update(value).digest("hex");
-const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const dateOnly = (value: string | Date): string =>
+  value instanceof Date ? utcDate(value) : value.slice(0, 10);
 const freeEmailDomains = new Set([
   "gmail.com",
   "googlemail.com",
@@ -79,6 +80,41 @@ const freeEmailDomains = new Set([
   "gmx.com",
   "fastmail.com",
 ]);
+
+function isValidWorkEmail(email: string): boolean {
+  if (email.length > 254) return false;
+  const separator = email.indexOf("@");
+  if (separator < 1 || separator > 64 || separator !== email.lastIndexOf("@"))
+    return false;
+  const local = email.slice(0, separator);
+  const domain = email.slice(separator + 1);
+  if (
+    local.startsWith(".") ||
+    local.endsWith(".") ||
+    local.includes("..") ||
+    !domain.includes(".")
+  )
+    return false;
+  const localChars = "abcdefghijklmnopqrstuvwxyz0123456789.!#$%&'*+/=?^_`{|}~-";
+  const normalizedLocal = local.toLowerCase();
+  for (let index = 0; index < normalizedLocal.length; index += 1) {
+    if (!localChars.includes(normalizedLocal[index] ?? "")) return false;
+  }
+  const labels = domain.toLowerCase().split(".");
+  if (labels.at(-1)?.length === 0 || (labels.at(-1)?.length ?? 0) < 2)
+    return false;
+  return labels.every((label) => {
+    if (label.length < 1 || label.length > 63) return false;
+    if (label.startsWith("-") || label.endsWith("-")) return false;
+    for (let index = 0; index < label.length; index += 1) {
+      const code = label.charCodeAt(index);
+      const isDigit = code >= 48 && code <= 57;
+      const isLowercase = code >= 97 && code <= 122;
+      if (!isDigit && !isLowercase && code !== 45) return false;
+    }
+    return true;
+  });
+}
 
 function publicPuzzle(puzzle: PuzzleRow, date: string) {
   return {
@@ -248,7 +284,8 @@ export function registerCompetitionRoutes(
         );
         const waiting = candidate.rows[0];
         if (waiting) {
-          const puzzle = await currentPuzzle(waiting.puzzle_date);
+          const puzzleDate = dateOnly(waiting.puzzle_date);
+          const puzzle = await currentPuzzle(puzzleDate);
           const updated = await client.query<MatchRow>(
             `UPDATE ranked_matches SET status = 'active', player_two_id = $2,
                player_two_rating = $3, started_at = $4, expires_at = $4 + interval '5 minutes'
@@ -260,7 +297,7 @@ export function registerCompetitionRoutes(
           await client.query("COMMIT");
           return {
             ...matchSummary(match, user.id),
-            puzzle: publicPuzzle(puzzle, match.puzzle_date),
+            puzzle: publicPuzzle(puzzle, puzzleDate),
           };
         }
 
@@ -355,9 +392,10 @@ export function registerCompetitionRoutes(
         expires_at: match.expires_at.toISOString(),
       };
       if (match.status === "active") {
+        const puzzleDate = dateOnly(match.puzzle_date);
         response.puzzle = publicPuzzle(
-          await currentPuzzle(match.puzzle_date),
-          match.puzzle_date,
+          await currentPuzzle(puzzleDate),
+          puzzleDate,
         );
       }
       if (match.status === "completed") {
@@ -588,11 +626,7 @@ export function registerCompetitionRoutes(
       const normalized = request.body.email.trim().toLowerCase();
       const companyName = request.body.company_name.trim().replace(/\s+/g, " ");
       const domain = normalized.split("@")[1] ?? "";
-      if (
-        !emailRegex.test(normalized) ||
-        normalized.length > 254 ||
-        freeEmailDomains.has(domain)
-      )
+      if (!isValidWorkEmail(normalized) || freeEmailDomains.has(domain))
         return requestError(
           reply,
           400,
@@ -801,7 +835,7 @@ function matchSummary(match: MatchRow, userId: string) {
   return {
     match_id: match.id,
     status: match.status,
-    puzzle_date: match.puzzle_date,
+    puzzle_date: dateOnly(match.puzzle_date),
     expires_at: match.expires_at.toISOString(),
     ...(match.status === "completed"
       ? {

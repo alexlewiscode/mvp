@@ -734,7 +734,7 @@ describe.skipIf(!databaseUrl)("database API", () => {
           name: "Example Works",
           email_domain: "exampleworks.test",
           active_members: 3,
-          average_points: 50,
+          average_points: 100,
         },
       ],
     });

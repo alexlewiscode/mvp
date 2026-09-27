@@ -293,8 +293,8 @@ export async function buildApp(options: AppOptions) {
     const tokenHash = hash(authorization.slice(7));
     const result = await db.query<AuthUser>(
       `SELECT u.id, u.username, u.display_name, u.avatar_url FROM sessions s JOIN users u ON u.id = s.user_id
-       WHERE s.token_hash = $1 AND s.expires_at > now()`,
-      [tokenHash],
+       WHERE s.token_hash = $1 AND s.expires_at > $2`,
+      [tokenHash, now()],
     );
     const user = result.rows[0];
     if (!user) {
