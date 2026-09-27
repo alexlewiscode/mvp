@@ -8,6 +8,7 @@ import {
   eloDeltas,
   INITIAL_ELO,
   isDailyCodeAnswerCorrect,
+  isValidEmailAddress,
   MIN_COMPANY_ACTIVE_MEMBERS,
   WIN_POINTS,
 } from "./competition.js";
@@ -80,41 +81,6 @@ const freeEmailDomains = new Set([
   "gmx.com",
   "fastmail.com",
 ]);
-
-function isValidWorkEmail(email: string): boolean {
-  if (email.length > 254) return false;
-  const separator = email.indexOf("@");
-  if (separator < 1 || separator > 64 || separator !== email.lastIndexOf("@"))
-    return false;
-  const local = email.slice(0, separator);
-  const domain = email.slice(separator + 1);
-  if (
-    local.startsWith(".") ||
-    local.endsWith(".") ||
-    local.includes("..") ||
-    !domain.includes(".")
-  )
-    return false;
-  const localChars = "abcdefghijklmnopqrstuvwxyz0123456789.!#$%&'*+/=?^_`{|}~-";
-  const normalizedLocal = local.toLowerCase();
-  for (let index = 0; index < normalizedLocal.length; index += 1) {
-    if (!localChars.includes(normalizedLocal[index] ?? "")) return false;
-  }
-  const labels = domain.toLowerCase().split(".");
-  if (labels.at(-1)?.length === 0 || (labels.at(-1)?.length ?? 0) < 2)
-    return false;
-  return labels.every((label) => {
-    if (label.length < 1 || label.length > 63) return false;
-    if (label.startsWith("-") || label.endsWith("-")) return false;
-    for (let index = 0; index < label.length; index += 1) {
-      const code = label.charCodeAt(index);
-      const isDigit = code >= 48 && code <= 57;
-      const isLowercase = code >= 97 && code <= 122;
-      if (!isDigit && !isLowercase && code !== 45) return false;
-    }
-    return true;
-  });
-}
 
 function publicPuzzle(puzzle: PuzzleRow, date: string) {
   return {
@@ -288,7 +254,8 @@ export function registerCompetitionRoutes(
           const puzzle = await currentPuzzle(puzzleDate);
           const updated = await client.query<MatchRow>(
             `UPDATE ranked_matches SET status = 'active', player_two_id = $2,
-               player_two_rating = $3, started_at = $4, expires_at = $4 + interval '5 minutes'
+             player_two_rating = $3, started_at = $4::timestamptz,
+             expires_at = $4::timestamptz + interval '5 minutes'
              WHERE id = $1 RETURNING *`,
             [waiting.id, user.id, rating, now()],
           );
@@ -626,7 +593,7 @@ export function registerCompetitionRoutes(
       const normalized = request.body.email.trim().toLowerCase();
       const companyName = request.body.company_name.trim().replace(/\s+/g, " ");
       const domain = normalized.split("@")[1] ?? "";
-      if (!isValidWorkEmail(normalized) || freeEmailDomains.has(domain))
+      if (!isValidEmailAddress(normalized) || freeEmailDomains.has(domain))
         return requestError(
           reply,
           400,

@@ -783,6 +783,12 @@ describe.skipIf(!databaseUrl)("database API", () => {
 
   it("submits one server-validated daily code result and hides the answer from storage", async () => {
     const bearer = await token("daily-mvp");
+    const claimed = await app.inject({
+      method: "POST",
+      url: "/v1/puzzles/daily/attempt",
+      headers: { authorization: `Bearer ${bearer}` },
+    });
+    expect(claimed.statusCode).toBe(201);
     const offset = dailyPuzzleOffset("2026-08-20", 5);
     const puzzle = await db.query<{ answer: string }>(
       "SELECT answer FROM daily_code_puzzles ORDER BY puzzle_id OFFSET $1 LIMIT 1",

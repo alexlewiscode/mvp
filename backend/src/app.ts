@@ -17,6 +17,7 @@ import { registerCompetitionRoutes } from "./competition-routes.js";
 import {
   dailyPuzzleOffset,
   isDailyCodeAnswerCorrect,
+  isValidEmailAddress,
   WIN_POINTS,
 } from "./competition.js";
 import { cloudflareEmailProvider, type EmailProvider } from "./email.js";
@@ -823,10 +824,7 @@ export async function buildApp(options: AppOptions) {
           "Email authentication is temporarily unavailable",
         );
       const normalized = request.body.email.trim().toLowerCase();
-      if (
-        normalized.length > 254 ||
-        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)
-      )
+      if (!isValidEmailAddress(normalized))
         return sendError(
           reply,
           400,

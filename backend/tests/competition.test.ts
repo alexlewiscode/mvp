@@ -5,6 +5,7 @@ import {
   eloDeltas,
   expectedScore,
   isDailyCodeAnswerCorrect,
+  isValidEmailAddress,
 } from "../src/competition.js";
 
 describe("ranked competition rules", () => {
@@ -33,5 +34,15 @@ describe("ranked competition rules", () => {
       dailyPuzzleOffset("2026-09-27", 5),
     );
     expect(() => dailyPuzzleOffset("2026-02-30", 5)).toThrow("real UTC");
+  });
+});
+
+describe("email address validation", () => {
+  it("accepts ordinary email addresses and rejects malformed or oversized values", () => {
+    expect(isValidEmailAddress("developer@example.com")).toBe(true);
+    expect(isValidEmailAddress("dev+one@sub.example.co.uk")).toBe(true);
+    expect(isValidEmailAddress("!@!." + "!.".repeat(100))).toBe(false);
+    expect(isValidEmailAddress("bad@@example.com")).toBe(false);
+    expect(isValidEmailAddress(`${"a".repeat(255)}@example.com`)).toBe(false);
   });
 });

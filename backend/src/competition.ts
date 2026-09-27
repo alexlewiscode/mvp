@@ -4,6 +4,40 @@ export const ELO_K = 32;
 export const ELO_MATCH_WINDOW_MS = 30 * 24 * 60 * 60 * 1_000;
 export const MIN_COMPANY_ACTIVE_MEMBERS = 3;
 
+export function isValidEmailAddress(email: string): boolean {
+  if (email.length > 254) return false;
+  const separator = email.indexOf("@");
+  if (separator < 1 || separator > 64 || separator !== email.lastIndexOf("@"))
+    return false;
+  const local = email.slice(0, separator);
+  const domain = email.slice(separator + 1);
+  if (
+    local.startsWith(".") ||
+    local.endsWith(".") ||
+    local.includes("..") ||
+    !domain.includes(".")
+  )
+    return false;
+  const localChars = "abcdefghijklmnopqrstuvwxyz0123456789.!#$%&'*+/=?^_`{|}~-";
+  const normalizedLocal = local.toLowerCase();
+  for (let index = 0; index < normalizedLocal.length; index += 1) {
+    if (!localChars.includes(normalizedLocal[index] ?? "")) return false;
+  }
+  const labels = domain.toLowerCase().split(".");
+  if ((labels.at(-1)?.length ?? 0) < 2) return false;
+  return labels.every((label) => {
+    if (label.length < 1 || label.length > 63) return false;
+    if (label.startsWith("-") || label.endsWith("-")) return false;
+    for (let index = 0; index < label.length; index += 1) {
+      const code = label.charCodeAt(index);
+      const isDigit = code >= 48 && code <= 57;
+      const isLowercase = code >= 97 && code <= 122;
+      if (!isDigit && !isLowercase && code !== 45) return false;
+    }
+    return true;
+  });
+}
+
 export function expectedScore(rating: number, opponentRating: number): number {
   return 1 / (1 + 10 ** ((opponentRating - rating) / 400));
 }
