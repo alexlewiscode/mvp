@@ -1,8 +1,6 @@
-use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
-use crate::agent::{AgentDisplay, AgentEvent, AgentKind, AgentState, AgentStatus};
 use crate::api::{Leaderboard, LeaderboardRequest, RunPayload, WorkerCommand, WorkerEvent};
 use crate::config::{DailyMvp, HighScoreStore};
 use crate::event::AppInput;
@@ -19,17 +17,7 @@ const NAME_LIMIT: usize = 24;
 /// Characters a player name may contain.
 const NAME_LEGAL: &str = " -_.'!@#$&+=()";
 
-/// Why the game was paused by the agent. Manual pauses are tracked
-/// separately as [`AppState::PausedManual`] so agent events can never
-/// override them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PauseReason {
-    NeedsInput,
-    Completed,
-    Stopped,
-}
-
-/// Top-level application states. `Playing`/`PausedManual`/`PausedAgent`/
+/// Top-level application states. `Playing`/`PausedManual`/
 /// `GameOver` are all sub-states of a live run; `Menu` is the idle screen,
 /// `GameMenu` the game selection between them, and `NamePrompt` the
 /// first-run (or rename) player-name entry screen.
@@ -41,7 +29,6 @@ pub enum AppState {
     NamePrompt,
     Playing,
     PausedManual,
-    PausedAgent(PauseReason),
     GameOver,
 }
 
@@ -55,8 +42,7 @@ pub enum OnlineLeaderboard {
 }
 
 /// The application: owns state transitions and the active game. All
-/// transitions are plain methods so they can be driven by keyboard input
-/// and by agent lifecycle events without either knowing about the other.
+/// transitions are plain methods driven directly by player input.
 pub struct App {
     pub state: AppState,
     game: Option<ActiveGame>,
@@ -71,25 +57,6 @@ pub struct App {
     /// True while the finished run just became today's MVP.
     mvp_just_set: bool,
     should_quit: bool,
-    /// One entry per agent kind; the aggregate view drives the UI and the
-    /// pause/resume transitions.
-    agents: HashMap<AgentKind, AgentState>,
-    /// Monotonic event counter; the agent with the highest `activity` value
-    /// most recently emitted an event.
-    activity_seq: u64,
-    /// The agents whose status caused the current [`AppState::PausedAgent`]
-    /// pause. Kept because the pause reason can outlive the agent status
-    /// (a completed agent that starts working again does not clear the
-    /// pause), and the overlay must still name the right agents.
-    pause_involved: Vec<AgentKind>,
-    /// Which agent to display (`--agent codex`, `--agent auto`).
-    display_preference: Option<AgentDisplay>,
-    /// Whether an agent `Working` event may resume a run that the agent
-    /// paused. Turned off in the application layer, never in the adapter.
-    /// A run paused because an agent *completed* is only auto-resumed when
-    /// a different agent (or a fresh session) starts working: the developer
-    /// decides when to continue a finished run of the completing agent.
-    agent_auto_resume: bool,
     online_commands: Option<Sender<WorkerCommand>>,
     online_username: Option<String>,
     online_leaderboard: OnlineLeaderboard,
@@ -109,11 +76,6 @@ impl App {
             name_buffer: String::new(),
             mvp_just_set: false,
             should_quit: false,
-            agents: HashMap::new(),
-            activity_seq: 0,
-            pause_involved: Vec::new(),
-            display_preference: None,
-            agent_auto_resume: true,
             online_commands: None,
             online_username: None,
             online_leaderboard: OnlineLeaderboard::NotLoaded,
@@ -133,7 +95,6 @@ impl App {
                 AppState::GameMenu => self.start_game(),
                 AppState::NamePrompt => self.submit_name(),
                 AppState::GameOver => self.restart_same_game(),
-                AppState::PausedAgent(_) => self.resume(),
                 AppState::Playing => self.game_input(GameInput::Confirm),
                 AppState::PausedManual => {}
             },
@@ -187,10 +148,9 @@ impl App {
                 AppState::Leaderboard => self.state = AppState::Menu,
                 AppState::NamePrompt => self.dismiss_name_prompt(),
                 AppState::GameMenu => self.state = AppState::Menu,
-                AppState::Playing
-                | AppState::PausedManual
-                | AppState::PausedAgent(_)
-                | AppState::GameOver => self.back_to_menu(),
+                AppState::Playing | AppState::PausedManual | AppState::GameOver => {
+                    self.back_to_menu()
+                }
             },
             AppInput::Resize(cols, rows) => self.set_terminal_size(cols, rows),
         }
@@ -251,17 +211,17 @@ impl App {
         self.game_selection = ((current + delta).rem_euclid(count)) as usize;
     }
 
-    /// Manual pause. Never entered by agent events.
+    /// Pauses the game until resumed by the player.
     pub fn pause(&mut self) {
         if self.state == AppState::Playing {
             self.state = AppState::PausedManual;
         }
     }
 
-    /// Resumes a run paused manually or by the agent.
+    /// Resumes a manually paused run.
     pub fn resume(&mut self) {
         match self.state {
-            AppState::PausedManual | AppState::PausedAgent(_) => {
+            AppState::PausedManual => {
                 self.state = AppState::Playing;
             }
             AppState::Menu
@@ -277,9 +237,6 @@ impl App {
         match self.state {
             AppState::Playing => self.pause(),
             AppState::PausedManual => self.resume(),
-            // Pressing P while the agent paused the game hands control
-            // back to the developer as a manual pause.
-            AppState::PausedAgent(_) => self.state = AppState::PausedManual,
             AppState::Menu
             | AppState::Leaderboard
             | AppState::GameMenu
@@ -373,193 +330,6 @@ impl App {
         if let Some(progress) = progress {
             self.store.set_daily_pr_progress(progress);
         }
-    }
-
-    // ---- agent events -----------------------------------------------------
-
-    /// Applies one lifecycle event from one agent. Runs on the main loop
-    /// only, so application state stays single-threaded. Defensive by
-    /// design: duplicates are idempotent and unexpected orderings never
-    /// panic — they at most update the agent status.
-    pub fn handle_agent_event(&mut self, kind: AgentKind, event: AgentEvent) {
-        let before = self.state;
-        self.activity_seq += 1;
-        let prev_status = self.agents.entry(kind).or_default().status;
-        let state = self.agents.get_mut(&kind).expect("entry exists");
-        state.apply(event);
-        state.activity = self.activity_seq;
-
-        match event {
-            AgentEvent::Started => {}
-            AgentEvent::Working => {
-                // A Completed pause is sticky for the agent that completed:
-                // only a *different* agent working (or the completing agent
-                // starting a fresh cycle) auto-resumes the run.
-                let sticky = self.state == AppState::PausedAgent(PauseReason::Completed)
-                    && prev_status == AgentStatus::Completed;
-                if !sticky {
-                    self.recompute_attention();
-                }
-            }
-            AgentEvent::NeedsInput | AgentEvent::Completed | AgentEvent::Stopped => {
-                self.recompute_attention();
-            }
-        }
-        if before != self.state {
-            crate::debug_log!(
-                "agent event {} {event}: {before:?} → {:?}",
-                kind.id(),
-                self.state
-            );
-        } else {
-            crate::debug_log!(
-                "agent event {} {event}: state unchanged ({:?})",
-                kind.id(),
-                self.state
-            );
-        }
-    }
-
-    /// Derives the pause/play state from the per-agent statuses:
-    ///
-    /// ```text
-    /// if ANY active agent NeedsInput → pause (needs input)
-    /// else if ANY active agent Working → play (or resume)
-    /// else if ANY agent Completed    → pause (completed)
-    /// else if ANY agent Stopped      → pause (session ended)
-    /// else                           → unchanged
-    /// ```
-    ///
-    /// Manual pauses, the menu and the game-over screen are never touched.
-    fn recompute_attention(&mut self) {
-        let needs = self.any_status(AgentStatus::NeedsInput);
-        let working = self.any_status(AgentStatus::Working);
-        let completed = self.any_status(AgentStatus::Completed);
-        let stopped = self.any_status(AgentStatus::Stopped);
-        match self.state {
-            AppState::Playing | AppState::PausedAgent(_) => {
-                if needs {
-                    self.state = AppState::PausedAgent(PauseReason::NeedsInput);
-                    self.pause_involved = self.agents_with_status(AgentStatus::NeedsInput);
-                } else if working {
-                    if self.agent_auto_resume {
-                        self.state = AppState::Playing;
-                    }
-                } else if completed {
-                    self.state = AppState::PausedAgent(PauseReason::Completed);
-                    self.pause_involved = self.agents_with_status(AgentStatus::Completed);
-                } else if stopped {
-                    self.state = AppState::PausedAgent(PauseReason::Stopped);
-                    self.pause_involved = self.agents_with_status(AgentStatus::Stopped);
-                }
-            }
-            AppState::Menu
-            | AppState::Leaderboard
-            | AppState::GameMenu
-            | AppState::NamePrompt
-            | AppState::PausedManual
-            | AppState::GameOver => {}
-        }
-    }
-
-    fn any_status(&self, status: AgentStatus) -> bool {
-        self.agents.values().any(|s| s.status == status)
-    }
-
-    /// The connected agents' current states, or disconnected.
-    pub fn agents(&self) -> &HashMap<AgentKind, AgentState> {
-        &self.agents
-    }
-
-    /// The aggregate status over all connected agents.
-    pub fn agent_aggregate(&self) -> AgentStatus {
-        let mut aggregate = AgentStatus::Disconnected;
-        for state in self.agents.values() {
-            if state.status.attention_weight() > aggregate.attention_weight() {
-                aggregate = state.status;
-            }
-        }
-        aggregate
-    }
-
-    /// How many agents have reported in (are not disconnected).
-    #[cfg(test)]
-    pub fn connected_agent_count(&self) -> usize {
-        self.agents
-            .values()
-            .filter(|s| s.status != AgentStatus::Disconnected)
-            .count()
-    }
-
-    /// The agent whose status matches `status`, ordered by kind. Used by
-    /// the pause overlays to say *who* needs attention.
-    pub fn agents_with_status(&self, status: AgentStatus) -> Vec<AgentKind> {
-        let mut kinds: Vec<AgentKind> = self
-            .agents
-            .iter()
-            .filter(|(_, s)| s.status == status)
-            .map(|(k, _)| *k)
-            .collect();
-        kinds.sort_unstable();
-        kinds
-    }
-
-    /// The agents that caused the current agent pause. Unlike the live
-    /// statuses, this survives a completing agent starting to work again
-    /// (the pause itself is sticky, and the overlay keeps naming who
-    /// finished).
-    pub fn pause_involved(&self) -> &[AgentKind] {
-        &self.pause_involved
-    }
-
-    /// Which agent the UI should display. `Specific(k)` always yields `k`;
-    /// otherwise the most recently active agent (nothing until the first
-    /// event).
-    #[cfg(test)]
-    pub fn display_focus(&self) -> Option<AgentKind> {
-        match self.display_preference {
-            Some(AgentDisplay::Specific(kind)) => Some(kind),
-            None | Some(AgentDisplay::Auto) => self.most_recent_active(),
-        }
-    }
-
-    /// The display preference set via `--agent`.
-    pub fn display_preference(&self) -> Option<AgentDisplay> {
-        self.display_preference
-    }
-
-    /// The most recently active non-disconnected agent, if any.
-    #[cfg(test)]
-    pub fn most_recent_active(&self) -> Option<AgentKind> {
-        self.agents
-            .iter()
-            .filter(|(_, s)| s.status != AgentStatus::Disconnected)
-            .max_by_key(|(_, s)| s.activity)
-            .map(|(k, _)| *k)
-    }
-
-    /// Announces which agent to display before any event has arrived
-    /// (`--agent claude`). The indicator still shows the live status.
-    #[cfg(test)]
-    pub fn set_agent_kind(&mut self, kind: AgentKind) {
-        self.set_agent_display(Some(AgentDisplay::Specific(kind)));
-    }
-
-    /// Controls which agent the UI focuses on (`--agent auto` included).
-    pub fn set_agent_display(&mut self, display: Option<AgentDisplay>) {
-        self.display_preference = display;
-        if let Some(AgentDisplay::Specific(kind)) = display {
-            let entry = self.agents.entry(kind).or_default();
-            if entry.status == AgentStatus::Disconnected {
-                entry.status = AgentStatus::Idle;
-            }
-        }
-    }
-
-    /// Controls whether agent `Working` events may resume an agent-paused
-    /// run (`--no-auto-resume` disables it).
-    pub fn set_agent_auto_resume(&mut self, enabled: bool) {
-        self.agent_auto_resume = enabled;
     }
 
     // ---- simulation ------------------------------------------------------
@@ -779,6 +549,27 @@ impl App {
 }
 
 #[cfg(test)]
+mod terminal_competition_tests {
+    use super::*;
+
+    #[test]
+    fn a_player_can_pause_and_resume_a_game_without_losing_the_run() {
+        let dir = std::env::temp_dir().join(format!("mvp_pause_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = App::new(HighScoreStore::load(dir.join("scores.json")));
+        app.set_terminal_size(100, 30);
+        app.start_game();
+        app.handle_input(AppInput::TogglePause);
+        assert_eq!(app.state, AppState::PausedManual);
+        app.handle_input(AppInput::TogglePause);
+        assert_eq!(app.state, AppState::Playing);
+        assert!(app.game().is_some());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(all(test, not(test)))]
 mod tests {
     use super::*;
 

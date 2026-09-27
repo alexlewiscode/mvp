@@ -2,9 +2,9 @@
 name = "mvp"
 version = "0.1.0"
 edition = "2024"
-description = "MVP: Most Valued Programmer, a competitive terminal arcade for the time between prompts"
+description = "MVP: Most Valued Programmer, terminal games for competing coders"
 license = "MIT"
-repository = "https://github.com/itzsleepyy/waitstate"
+repository = "https://github.com/alexlewiscode/mvp"
 readme = "../README.md"
 
 [dependencies]
@@ -24,6 +24,3 @@ semver = "1.0.26"
 thiserror = "2.0.17"
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"

@@ -5,8 +5,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
-use crate::agent::{AgentDisplay, AgentKind, AgentStatus};
-use crate::app::{App, AppState, OnlineLeaderboard, PauseReason};
+use crate::app::{App, AppState, OnlineLeaderboard};
 use crate::game::daily_fix::DailyFix;
 use crate::game::daily_pr::{DailyPr, MAX_GUESSES, Mark};
 use crate::game::scoring::{format_elapsed, format_score};
@@ -35,10 +34,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         AppState::Leaderboard => render_leaderboard(frame, app),
         AppState::GameMenu => render_game_menu(frame, app),
         AppState::NamePrompt => render_name_prompt(frame, app),
-        AppState::Playing
-        | AppState::PausedManual
-        | AppState::PausedAgent(_)
-        | AppState::GameOver => render_game(frame, app),
+        AppState::Playing | AppState::PausedManual | AppState::GameOver => render_game(frame, app),
     }
 }
 
@@ -130,10 +126,6 @@ fn render_menu(frame: &mut Frame, app: &App) {
         Span::styled(app.player_name(), white),
     ]));
     lines.push(Line::from(""));
-    if let Some(status_line) = agent_status_line(app) {
-        lines.push(status_line);
-        lines.push(Line::from(""));
-    }
     if let Some(message) = app.account_message() {
         lines.push(Line::styled(message, dim));
         lines.push(Line::from(""));
@@ -368,7 +360,7 @@ fn render_game(frame: &mut Frame, app: &App) {
 }
 
 /// Draws the shared chrome (bordered frame, HUD, controls) plus the
-/// pause/agent/game-over overlays on top of a game's custom body.
+/// pause and game-over overlays on top of a game's custom body.
 fn render_game_frame(
     frame: &mut Frame,
     app: &App,
@@ -399,7 +391,6 @@ fn render_game_frame(
 
     match app.state {
         AppState::PausedManual => render_paused(frame, area, app),
-        AppState::PausedAgent(reason) => render_agent_paused(frame, area, app, reason),
         AppState::GameOver => render_game_over(frame, area, app),
         AppState::Playing
         | AppState::Menu
@@ -409,11 +400,7 @@ fn render_game_frame(
     }
 }
 
-fn hud_paragraph(mut line: Line<'static>, app: &App) -> Paragraph<'static> {
-    if let Some(status) = agent_status_span(app) {
-        line.spans.insert(0, Span::raw("   "));
-        line.spans.insert(0, status);
-    }
+fn hud_paragraph(line: Line<'static>, _app: &App) -> Paragraph<'static> {
     Paragraph::new(line)
 }
 
@@ -736,8 +723,8 @@ fn render_fix_body(frame: &mut Frame, area: Rect, game: &DailyFix) {
 
 // ---- overlays --------------------------------------------------------------
 
-fn render_paused(frame: &mut Frame, area: Rect, app: &App) {
-    let mut lines = vec![
+fn render_paused(frame: &mut Frame, area: Rect, _app: &App) {
+    let lines = vec![
         Line::styled(
             "PAUSED",
             Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
@@ -745,114 +732,10 @@ fn render_paused(frame: &mut Frame, area: Rect, app: &App) {
         Line::from(""),
         Line::styled("P resume    ESC menu", Style::new().fg(Color::DarkGray)),
     ];
-    if let Some(status) = agent_status_span(app) {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![Span::raw("   "), status, Span::raw("   ")]));
-    }
     let height = lines.len() as u16 + 2;
     let rect = centered_fixed(area, 40, height);
     frame.render_widget(Clear, rect);
     let block = Block::bordered().border_style(Style::new().fg(Color::Yellow));
-    let inner = block.inner(rect);
-    frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), inner);
-    frame.render_widget(block, rect);
-}
-
-/// The agent-pause overlay: visually distinct from manual pause so the
-/// developer instantly knows *why* the game stopped and *which* agent is
-/// involved. With multiple agents the overlay names them all.
-fn render_agent_paused(frame: &mut Frame, area: Rect, app: &App, reason: PauseReason) {
-    let game_kind = app.game().map(ActiveGame::kind);
-    let game_title = game_kind.map(GameKind::title).unwrap_or("Stack Overflow");
-    let (status, verb_one, verb_many, detail, restart_hint) = match reason {
-        PauseReason::NeedsInput => (
-            AgentStatus::NeedsInput,
-            "NEEDS YOU",
-            "NEED YOU",
-            format!("{game_title} paused automatically"),
-            "Return to {agents}",
-        ),
-        PauseReason::Completed => (
-            AgentStatus::Completed,
-            "FINISHED",
-            "FINISHED",
-            "Your run has been preserved".to_string(),
-            "Return to {agents}",
-        ),
-        PauseReason::Stopped => (
-            AgentStatus::Stopped,
-            "SESSION ENDED",
-            "SESSIONS ENDED",
-            "Your run has been preserved".to_string(),
-            "Restart {agents} to resume",
-        ),
-    };
-    // The agents that caused the pause. Prefer the recorded attribution:
-    // the pause is sticky, so a completing agent may already be working
-    // again while the run is still paused.
-    let mut involved = app.pause_involved().to_vec();
-    if involved.is_empty() {
-        involved = app.agents_with_status(status);
-    }
-    let involved = involved;
-
-    // Title: "CODEX NEEDS YOU" for one agent, "2 AGENTS NEED YOU" for many.
-    let title = if involved.len() == 1 {
-        format!("{} {verb_one}", involved[0].upper_name())
-    } else {
-        format!("{} AGENTS {verb_many}", involved.len())
-    };
-
-    let mut lines = vec![
-        Line::styled(
-            title,
-            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        ),
-        Line::from(""),
-        Line::styled(detail, Style::new().fg(Color::DarkGray)),
-    ];
-    if involved.len() > 1 {
-        lines.push(Line::styled(
-            involved
-                .iter()
-                .map(|k| k.name())
-                .collect::<Vec<_>>()
-                .join(", "),
-            Style::new().fg(Color::DarkGray),
-        ));
-    }
-    lines.push(Line::from(""));
-    lines.push(Line::styled(
-        format!(
-            "Score {}",
-            format_score(app.game().map(ActiveGame::score).unwrap_or(0))
-        ),
-        Style::new().fg(Color::White),
-    ));
-    lines.push(Line::from(""));
-
-    let hint_agents = if involved.len() == 1 {
-        involved[0].name().to_string()
-    } else {
-        "your coding agents".to_string()
-    };
-    lines.push(Line::styled(
-        restart_hint.replace("{agents}", &hint_agents),
-        Style::new().fg(Color::DarkGray),
-    ));
-    if let Some(status) = agent_status_span(app) {
-        lines.push(Line::from(vec![Span::raw("   "), status, Span::raw("   ")]));
-    }
-    lines.push(Line::from(""));
-    lines.push(Line::styled(
-        "[ENTER] resume run    [ESC] menu",
-        Style::new().fg(Color::Green),
-    ));
-
-    let height = lines.len() as u16 + 2;
-    let rect = centered_fixed(area, 44, height);
-    frame.render_widget(Clear, rect);
-    let block = Block::bordered().border_style(Style::new().fg(Color::Cyan));
     let inner = block.inner(rect);
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), inner);
     frame.render_widget(block, rect);
@@ -945,9 +828,6 @@ fn render_game_over(frame: &mut Frame, area: Rect, app: &App) {
             Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
         ));
     }
-    if let Some(status) = agent_status_span(app) {
-        lines.push(Line::from(vec![Span::raw("   "), status, Span::raw("   ")]));
-    }
     lines.push(Line::from(""));
     lines.push(Line::styled(
         "[R] PLAY AGAIN",
@@ -962,133 +842,6 @@ fn render_game_over(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(rect);
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), inner);
     frame.render_widget(block, rect);
-}
-
-// ---- agent indicator -------------------------------------------------------
-
-/// The small `Codex • Working` indicator shown in the HUD, pause overlays
-/// and menu. Returns `None` while no agent has ever reported in.
-fn agent_status_span(app: &App) -> Option<Span<'static>> {
-    let specific = match app.display_preference() {
-        Some(AgentDisplay::Specific(kind)) => Some(kind),
-        None | Some(AgentDisplay::Auto) => None,
-    };
-    if let Some(kind) = specific {
-        let status = app
-            .agents()
-            .get(&kind)
-            .map(|s| s.status)
-            .unwrap_or(AgentStatus::Disconnected);
-        return (status != AgentStatus::Disconnected).then(|| span_for(kind, status));
-    }
-
-    let connected = connected_agents(app);
-    if connected.is_empty() {
-        return None;
-    }
-    if connected.len() == 1 {
-        let (kind, status) = connected[0];
-        return Some(span_for(kind, status));
-    }
-    // Multi-agent mode: a compact aggregate line.
-    let status = app.agent_aggregate();
-    Some(Span::styled(
-        format!(
-            "{} agents {} {}",
-            connected.len(),
-            status_dot(status),
-            status.label()
-        ),
-        status_style(status),
-    ))
-}
-
-fn span_for(kind: AgentKind, status: AgentStatus) -> Span<'static> {
-    Span::styled(
-        format!("{} {} {}", kind.name(), status_dot(status), status.label()),
-        status_style(status),
-    )
-}
-
-fn status_dot(status: AgentStatus) -> &'static str {
-    match status {
-        AgentStatus::Working => "●",
-        _ => "○",
-    }
-}
-
-fn status_style(status: AgentStatus) -> Style {
-    match status {
-        AgentStatus::Working => Style::new().fg(Color::Green),
-        AgentStatus::NeedsInput => Style::new().fg(Color::Yellow),
-        AgentStatus::Completed => Style::new().fg(Color::Cyan),
-        AgentStatus::Disconnected | AgentStatus::Idle | AgentStatus::Stopped => {
-            Style::new().fg(Color::DarkGray)
-        }
-    }
-}
-
-/// The non-disconnected agents with their statuses, sorted by kind.
-fn connected_agents(app: &App) -> Vec<(AgentKind, AgentStatus)> {
-    let mut list: Vec<(AgentKind, AgentStatus)> = app
-        .agents()
-        .iter()
-        .filter(|(_, s)| s.status != AgentStatus::Disconnected)
-        .map(|(k, s)| (*k, s.status))
-        .collect();
-    list.sort_unstable_by_key(|(k, _)| *k);
-    list
-}
-
-/// A full sentence for the menu, e.g. "Codex is working" or
-/// "2 agents are working". `None` while no agent has ever reported in.
-fn agent_status_line(app: &App) -> Option<Line<'static>> {
-    let connected = connected_agents(app);
-    let specific = match app.display_preference() {
-        Some(AgentDisplay::Specific(kind)) => Some(kind),
-        None | Some(AgentDisplay::Auto) => None,
-    };
-
-    let (name, status) = if let Some(kind) = specific {
-        let status = app
-            .agents()
-            .get(&kind)
-            .map(|s| s.status)
-            .unwrap_or(AgentStatus::Disconnected);
-        (kind.name(), status)
-    } else if connected.len() == 1 {
-        (connected[0].0.name(), connected[0].1)
-    } else if connected.len() > 1 {
-        let text = match app.agent_aggregate() {
-            AgentStatus::Idle => format!("{} agents are idle", connected.len()),
-            AgentStatus::Working => format!("{} agents are working", connected.len()),
-            AgentStatus::NeedsInput => format!("{} agents need your input", connected.len()),
-            AgentStatus::Completed => format!("{} agents finished", connected.len()),
-            AgentStatus::Stopped => format!("{} agent sessions ended", connected.len()),
-            AgentStatus::Disconnected => return None,
-        };
-        let style = match app.agent_aggregate() {
-            AgentStatus::Working => Style::new().fg(Color::Green),
-            AgentStatus::NeedsInput => Style::new().fg(Color::Yellow),
-            _ => Style::new().fg(Color::DarkGray),
-        };
-        return Some(Line::styled(text, style));
-    } else {
-        return None;
-    };
-
-    if status == AgentStatus::Disconnected {
-        return None;
-    }
-    let text = match status {
-        AgentStatus::Idle => format!("{name} is idle"),
-        AgentStatus::Working => format!("{name} is working"),
-        AgentStatus::NeedsInput => format!("{name} needs your input"),
-        AgentStatus::Completed => format!("{name} finished"),
-        AgentStatus::Stopped => format!("{name} session ended"),
-        AgentStatus::Disconnected => return None,
-    };
-    Some(Line::styled(text, status_style(status)))
 }
 
 // ---- shared helpers --------------------------------------------------------
@@ -1135,7 +888,6 @@ fn render_too_small(frame: &mut Frame, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::AgentKind;
     use crate::config::HighScoreStore;
     use crate::event::AppInput;
     use ratatui::Terminal;
@@ -1564,138 +1316,6 @@ mod tests {
         app.pause();
         let text = all_text(&render_buffer(&app, 100, 30));
         assert!(text.contains("PAUSED"));
-    }
-
-    #[test]
-    fn agent_pause_render_is_distinct_from_manual_pause() {
-        let mut app = app_at(100, 30);
-        app.start_game();
-        app.handle_agent_event(AgentKind::ClaudeCode, crate::agent::AgentEvent::NeedsInput);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("CLAUDE NEEDS YOU"));
-        assert!(text.contains("paused automatically"));
-        assert!(text.contains("Return to Claude Code"));
-        assert!(text.contains("resume run"));
-        assert!(!text.contains("PAUSED"));
-    }
-
-    #[test]
-    fn codex_pause_render_names_codex() {
-        let mut app = app_at(100, 30);
-        app.start_game();
-        app.handle_agent_event(AgentKind::Codex, crate::agent::AgentEvent::NeedsInput);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("CODEX NEEDS YOU"));
-        assert!(text.contains("Return to Codex"));
-        assert!(!text.contains("CLAUDE"));
-    }
-
-    #[test]
-    fn gemini_and_opencode_pause_overlays_use_their_names() {
-        for (kind, name) in [
-            (AgentKind::GeminiCli, "GEMINI NEEDS YOU"),
-            (AgentKind::OpenCode, "OPENCODE NEEDS YOU"),
-        ] {
-            let mut app = app_at(100, 30);
-            app.start_game();
-            app.handle_agent_event(kind, crate::agent::AgentEvent::NeedsInput);
-            let text = all_text(&render_buffer(&app, 100, 30));
-            assert!(text.contains(name), "expected {name} in:\n{text}");
-        }
-    }
-
-    #[test]
-    fn multi_agent_pause_overlay_names_all_agents() {
-        let mut app = app_at(100, 30);
-        app.start_game();
-        app.handle_agent_event(AgentKind::ClaudeCode, crate::agent::AgentEvent::NeedsInput);
-        app.handle_agent_event(AgentKind::Codex, crate::agent::AgentEvent::NeedsInput);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("2 AGENTS NEED YOU"));
-        assert!(text.contains("Claude Code, Codex"));
-        assert!(text.contains("your coding agents"));
-    }
-
-    #[test]
-    fn completed_pause_render_shows_finished() {
-        let mut app = app_at(100, 30);
-        app.start_game();
-        app.handle_agent_event(AgentKind::ClaudeCode, crate::agent::AgentEvent::Completed);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("CLAUDE FINISHED"));
-        assert!(text.contains("Your run has been preserved"));
-    }
-
-    #[test]
-    fn session_end_pause_render_shows_ended() {
-        let mut app = app_at(100, 30);
-        app.start_game();
-        app.handle_agent_event(AgentKind::ClaudeCode, crate::agent::AgentEvent::Stopped);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("CLAUDE SESSION ENDED"));
-    }
-
-    #[test]
-    fn hud_shows_agent_indicator_when_agent_reported_in() {
-        let mut app = app_at(100, 30);
-        app.start_game();
-        app.handle_agent_event(AgentKind::ClaudeCode, crate::agent::AgentEvent::Working);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("Claude Code"));
-        assert!(text.contains("Working"));
-    }
-
-    #[test]
-    fn hud_shows_multi_agent_indicator_when_two_agents_connected() {
-        let mut app = app_at(100, 30);
-        app.start_game();
-        app.handle_agent_event(AgentKind::ClaudeCode, crate::agent::AgentEvent::Working);
-        app.handle_agent_event(AgentKind::Codex, crate::agent::AgentEvent::Working);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("2 agents"));
-        assert!(text.contains("Working"));
-    }
-
-    #[test]
-    fn hud_has_no_agent_indicator_when_disconnected() {
-        let mut app = app_at(100, 30);
-        app.start_game();
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(!text.contains("Claude"));
-    }
-
-    #[test]
-    fn menu_shows_claude_working_hint() {
-        let mut app = app_at(100, 30);
-        app.handle_agent_event(AgentKind::ClaudeCode, crate::agent::AgentEvent::Working);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("Claude Code is working"));
-        assert!(text.contains("PLAY"));
-    }
-
-    #[test]
-    fn menu_has_no_agent_line_when_disconnected() {
-        let app = app_at(100, 30);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(!text.contains("Claude"));
-    }
-
-    #[test]
-    fn game_over_panel_shows_agent_line() {
-        let mut app = app_at(100, 30);
-        app.start_game();
-        app.game_mut()
-            .as_mut()
-            .unwrap()
-            .as_stack_overflow_mut()
-            .unwrap()
-            .debug_force_overflow();
-        app.tick(std::time::Duration::from_millis(16));
-        assert_eq!(app.state, AppState::GameOver);
-        app.handle_agent_event(AgentKind::ClaudeCode, crate::agent::AgentEvent::Completed);
-        let text = all_text(&render_buffer(&app, 100, 30));
-        assert!(text.contains("GAME OVER"));
-        assert!(text.contains("Finished"));
     }
 
     #[test]

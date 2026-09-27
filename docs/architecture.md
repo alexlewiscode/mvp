@@ -21,15 +21,13 @@ There is one workspace package and one user-facing binary, both named `mvp`.
 ## Application Layers
 
 - `main.rs` dispatches CLI commands and runs the event loop.
-- `cli.rs` defines game, integration, and internal hook commands.
+- `cli.rs` defines game and online competition commands.
 - `tui.rs` initializes and restores the terminal.
 - `event.rs` translates terminal events into application input.
-- `app.rs` owns screen transitions, game selection, scores, and agent state.
+- `app.rs` owns screen transitions, game selection, local scores, and online results.
 - `ui.rs` renders menus, games, HUDs, and pause panels with Ratatui.
 - `config.rs` stores local names, scores, daily results, and Daily PR progress.
 - `game/` contains terminal-independent game logic.
-- `agent/` contains the generic lifecycle model and provider adapters.
-- `ipc/` transports local agent events to the running application.
 - `api/` owns authentication, HTTP DTOs, the durable run queue, and the
   background network worker.
 
@@ -56,7 +54,7 @@ GitHub-ID-backed online account.
 PostgreSQL stores immutable game runs. The client supplies raw result metrics
 and an idempotent UUID, while the server supplies identity, timestamps, and
 versioned normalized MVP points. No source code, prompts, terminal contents,
-repository data, or coding-agent output crosses this boundary.
+repository data, or terminal contents cross this boundary.
 
 Daily challenge boundaries use UTC. Version 1 daily identities are
 `daily_pr:v1:YYYY-MM-DD` and `daily_fix:v1:YYYY-MM-DD`; submissions must match
@@ -71,9 +69,6 @@ initial anti-cheat boundary are specified in [Backend](backend.md).
 - Game simulation is delta-time based and clamps long frames.
 - `ActiveGame` gives the app one shared interface across real-time and turn-based games.
 - Only the playing state advances game time; pauses and undersized terminals freeze runs.
-- Agent adapters normalize provider signals into one `AgentEvent` model.
-- Agent events reach the single-threaded app through a channel.
-- Local IPC uses loopback transport, a per-user token, and a versioned protocol.
 - Daily challenges use the UTC epoch day and a versioned identity so all users
   receive the same puzzle.
 - Daily score metrics normalize to a higher-is-better value for one comparison path.
